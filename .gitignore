@@ -1,0 +1,18 @@
+# Harvested photo pool (built by seoul_harvest.py; large, ~thousands of items)
+seoul_archive.json
+
+# Runtime state (last-success timestamp)
+seoul_state.json
+
+# Logs
+*.log
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# macOS
+.DS_Store

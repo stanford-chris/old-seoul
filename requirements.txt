@@ -1,0 +1,9 @@
+# seoul_post.py — posting to Bluesky
+atproto>=0.0.55
+
+# seoul_harvest.py — parsing archive item pages
+beautifulsoup4>=4.12
+
+# Note: seoul_post.py also shells out to the `claude` CLI to translate the
+# Korean captions (see README). That is a separate command-line tool, not a
+# pip package, and must be installed and authenticated separately.
