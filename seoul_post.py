@@ -13,6 +13,7 @@ Usage:
 """
 
 import json
+import os
 import random
 import re
 import subprocess
@@ -44,6 +45,30 @@ def keychain_password(account, service):
     return result.stdout.strip()
 
 
+CLAUDE_TOKEN_ACCOUNT = 'seoulbot'
+CLAUDE_TOKEN_SERVICE = 'claude-oauth-token'
+
+
+def claude_env():
+    """Env for the `claude -p` subprocess.
+
+    If a long-lived OAuth token (from `claude setup-token`) is stored in the
+    Keychain, inject it as CLAUDE_CODE_OAUTH_TOKEN so the headless launchd job
+    doesn't depend on the interactive login's short-lived token (which expires
+    intra-day and 401s). Falls back to the ambient environment if absent, so
+    manual runs with a logged-in CLI still work.
+    """
+    env = os.environ.copy()
+    result = subprocess.run(
+        ['security', 'find-generic-password',
+         '-a', CLAUDE_TOKEN_ACCOUNT, '-s', CLAUDE_TOKEN_SERVICE, '-w'],
+        capture_output=True, text=True
+    )
+    if result.returncode == 0 and result.stdout.strip():
+        env['CLAUDE_CODE_OAUTH_TOKEN'] = result.stdout.strip()
+    return env
+
+
 def translate(title_ko, description_ko, year):
     """Translate Korean title and description to concise English via claude -p."""
     prompt = (
@@ -62,10 +87,13 @@ def translate(title_ko, description_ko, year):
     for attempt in range(2):
         result = subprocess.run(
             ['claude', '-p', '--model', 'claude-haiku-4-5-20251001', prompt],
-            capture_output=True, text=True
+            capture_output=True, text=True, env=claude_env()
         )
         if result.returncode != 0:
-            raise RuntimeError(f'claude -p failed: {result.stderr}')
+            # The claude CLI writes some errors (e.g. auth 401s) to stdout, not
+            # stderr, so include both to keep failures diagnosable.
+            err = (result.stderr or result.stdout or '').strip() or '(no output)'
+            raise RuntimeError(f'claude -p failed (exit {result.returncode}): {err}')
         text = result.stdout.strip()
         text = re.sub(r'^```[a-z]*\n?|\n?```$', '', text).strip()
         try:
@@ -84,7 +112,7 @@ SEOUL_EMOJIS = [
       "가요", "음악", "노래", "합창", "경연", "연주", "악단"], "🎵"),
     (["construct", "groundbreak", "build", "erect", "foundation", "bridge", "road", "highway", "infrastructure", "tunnel", "overpass",
       "착공", "건설", "공사", "준공", "개통", "교량", "도로"], "🏗️"),
-    (["government", "office", "city hall", "ministry", "assembly", "court", "police", "fire station",
+    (["government", "office", "city hall", "mayor", "governor", "ministry", "assembly", "court", "police", "fire station",
       "청사", "시청", "구청", "경찰", "소방", "법원", "국회"], "🏛️"),
     (["school", "university", "college", "education", "library",
       "학교", "대학", "도서관", "교육"], "🏫"),
@@ -94,8 +122,12 @@ SEOUL_EMOJIS = [
       "사찰", "절", "교회", "성당", "향교", "불교"], "⛩️"),
     (["tram", "train", "railway", "subway", "metro", "bus", "transport", "station",
       "전차", "기차", "철도", "지하철", "버스", "역", "교통"], "🚃"),
+    # NB: the Korean word 시장 means BOTH "market" and "mayor", so it is
+    # deliberately omitted here — "서울시장" (Seoul Mayor) would otherwise pick
+    # 🛒. Genuine markets are still caught by the English "market" (translations
+    # render 시장-as-market as "market") plus the other Korean shop terms.
     (["market", "shop", "store", "commercial", "trade", "merchant",
-      "시장", "상점", "상가", "가게", "상업"], "🛒"),
+      "상점", "상가", "가게", "상업"], "🛒"),
     (["parade", "ceremony", "festival", "celebration", "rally", "event", "commemor",
       "행사", "축제", "기념", "퍼레이드", "행진", "식전", "식장"], "🎉"),
     (["park", "garden", "nature", "mountain", "river", "han river", "forest",
