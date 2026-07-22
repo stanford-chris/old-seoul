@@ -52,6 +52,11 @@ def keychain_password(account, service):
 CLAUDE_TOKEN_ACCOUNT = 'seoulbot'
 CLAUDE_TOKEN_SERVICE = 'claude-oauth-token'
 
+# Hard ceiling on each `claude -p` call. Without it a wedged CLI hangs the
+# launchd job indefinitely (the failure mode seen in seoul-index and
+# scan_filer before they grew the same guard, July 2026).
+CLAUDE_TIMEOUT = 300
+
 
 def claude_env():
     """Env for the `claude -p` subprocess.
@@ -73,6 +78,14 @@ def claude_env():
     return env
 
 
+def write_json_atomic(path, data, **dumps_kwargs):
+    """Write JSON via a sibling temp file and an atomic rename, so a crash
+    mid-write can never leave a truncated archive or state file behind."""
+    tmp = path.with_name(path.name + '.tmp')
+    tmp.write_text(json.dumps(data, **dumps_kwargs))
+    os.replace(tmp, path)
+
+
 def translate(title_ko, description_ko, year):
     """Translate Korean title and description to concise English via claude -p."""
     prompt = (
@@ -90,10 +103,18 @@ def translate(title_ko, description_ko, year):
         f'- Return JSON only: {{"title": "...", "description": "..."}}'
     )
     for attempt in range(2):
-        result = subprocess.run(
-            ['claude', '-p', '--model', 'claude-haiku-4-5-20251001', prompt],
-            capture_output=True, text=True, env=claude_env()
-        )
+        try:
+            result = subprocess.run(
+                ['claude', '-p', '--model', 'claude-haiku-4-5-20251001', prompt],
+                capture_output=True, text=True, env=claude_env(),
+                timeout=CLAUDE_TIMEOUT
+            )
+        except subprocess.TimeoutExpired:
+            if attempt == 0:
+                print(f'Warning: claude -p timed out after {CLAUDE_TIMEOUT}s (attempt 1), retrying...')
+                continue
+            raise RuntimeError(
+                f'claude -p timed out after {CLAUDE_TIMEOUT}s, twice')
         if result.returncode != 0:
             # The claude CLI writes some errors (e.g. auth 401s) to stdout, not
             # stderr, so include both to keep failures diagnosable.
@@ -411,12 +432,12 @@ def main():
 
     # Mark as posted and record success timestamp in a small state file
     item['posted'] = True
-    ARCHIVE.write_text(json.dumps(items, ensure_ascii=False, indent=2))
+    write_json_atomic(ARCHIVE, items, ensure_ascii=False, indent=2)
     state['last_success_at'] = datetime.now(timezone.utc).isoformat()
     if item_cat != '📷':
         recent_categories.append(item_cat)
         state['recent_categories'] = recent_categories[-CATEGORY_COOLDOWN:]
-    state_file.write_text(json.dumps(state, ensure_ascii=False, indent=2))
+    write_json_atomic(state_file, state, ensure_ascii=False, indent=2)
     print(f'Marked [{item["id"]}] as posted. {len(postable) - 1} items remaining.')
 
 
