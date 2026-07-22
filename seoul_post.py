@@ -306,18 +306,48 @@ def item_category(item):
     return pick_seoul_emoji('', desc_ko, f'{title_ko} {kw_str}')
 
 
+# Words that add no information when they are all a description contributes
+# beyond the title itself. Articles and prepositions, plus the vocabulary of
+# saying "this is a photograph of the thing the title names".
+GENERIC_DESC_WORDS = {
+    'a', 'an', 'the', 'of', 'in', 'at', 'on', 'and', 'to', 'from', 'with',
+    'photo', 'photograph', 'photographed', 'picture', 'pictured', 'image',
+    'view', 'scene', 'shot', 'shows', 'showing', 'shown', 'taken', 'depicts',
+    'depicting', 'seoul', 'city',
+}
+
+
+def desc_restates_title(title_en, desc_en):
+    """True if the description adds nothing beyond the title. The translate()
+    prompt forbids restating the title, but nothing enforced it and restatements
+    reached the live account ('Samseong-dong Linear Park' described as
+    'Photograph of the linear park in Samseong-dong', 20 Jul 2026). Token test:
+    strip generic words, and if every remaining description word already
+    appears in the title, the description is a restatement."""
+    def tokens(s):
+        return set(re.findall(r'[a-z0-9]+(?:-[a-z0-9]+)*', s.lower()))
+    fresh = tokens(desc_en) - tokens(title_en) - GENERIC_DESC_WORDS
+    return not fresh
+
+
 def format_post(title_en, desc_en, title_ko, year, item_id):
-    """Build a TextBuilder with proper hashtag facets, trimming if needed."""
-    year_str = year or '연대미상'
+    """Build a TextBuilder with proper hashtag facets, trimming if needed.
+
+    An empty desc_en (dropped as a restatement) omits the description line
+    rather than leaving a blank one. The English header says 'date unknown'
+    where the Korean says 연대미상 — one shared string leaked Korean into the
+    English line whenever the archive had no year."""
+    year_en = year or 'date unknown'
+    year_ko = year or '연대미상'
 
     # Calculate fixed overhead: everything except desc_en
     # tags as plain text for length check: '#Seoul #Korea #History #서울 #역사'
     tags_plain = ' '.join(f'#{t}' for t, _ in TAGS)
     body = (
-        f'📍 Seoul, {year_str}\n\n'
+        f'📍 Seoul, {year_en}\n\n'
         f'X {title_en}\n'
         f'{{DESC}}\n\n'
-        f'서울, {year_str}\n\n'
+        f'서울, {year_ko}\n\n'
         f'{title_ko}\n\n'
         f'{tags_plain}\n'
         f'🗃️ Seoul Metropolitan Archives'
@@ -328,8 +358,10 @@ def format_post(title_en, desc_en, title_ko, year, item_id):
         desc_en = desc_en[:max_desc - 1] + '…'
 
     topic_emoji = pick_seoul_emoji(title_en, desc_en, title_ko)
+    en_block = (f'{topic_emoji} {title_en}\n{desc_en}' if desc_en
+                else f'{topic_emoji} {title_en}')
     tb = client_utils.TextBuilder()
-    tb.text(f'📍 Seoul, {year_str}\n\n{topic_emoji} {title_en}\n{desc_en}\n\n서울, {year_str}\n\n{title_ko}\n\n')
+    tb.text(f'📍 Seoul, {year_en}\n\n{en_block}\n\n서울, {year_ko}\n\n{title_ko}\n\n')
     for i, (tag, tag_label) in enumerate(TAGS):
         if i > 0:
             tb.text(' ')
@@ -387,6 +419,9 @@ def main():
     desc_en = group_thousands(educate_quotes(translation['description']))
     print(f'  EN title: {title_en}')
     print(f'  EN desc:  {desc_en}')
+    if desc_restates_title(title_en, desc_en):
+        print('  EN desc restates the title — dropped.')
+        desc_en = ''
 
     # Format post
     post_text = format_post(title_en, desc_en, item['title'], item['year'], item['id'])
