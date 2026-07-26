@@ -100,7 +100,8 @@ def translate(title_ko, description_ko, year):
         f'- Do not add interpretation or extra context\n'
         f'- Use British date format for any dates (e.g. 9 June 1972, not June 9 1972 or 06/09/1972)\n'
         f'- Write quantities of one thousand or more with thousands separators (e.g. 3,000 officials, 25,000 spectators), but never put a separator in a year (write 1972, not 1,972)\n'
-        f'- Return JSON only: {{"title": "...", "description": "..."}}'
+        f'- date: the precise calendar date of the event ONLY if the Korean source explicitly states a specific day (e.g. 1968년 7월 17일, or 7월 17일). Format British: "17 July 1968". If a day and month are given without a year, complete it using the known Year above. If no specific day is stated, return an empty string. Never infer or guess a day.\n'
+        f'- Return JSON only: {{"title": "...", "description": "...", "date": "..."}}'
     )
     for attempt in range(2):
         try:
@@ -330,24 +331,24 @@ def desc_restates_title(title_en, desc_en):
     return not fresh
 
 
-def format_post(title_en, desc_en, title_ko, year, item_id):
+def format_post(title_en, desc_en, title_ko, year, item_id, date_en=''):
     """Build a TextBuilder with proper hashtag facets, trimming if needed.
 
     An empty desc_en (dropped as a restatement) omits the description line
-    rather than leaving a blank one. The English header says 'date unknown'
-    where the Korean says 연대미상 — one shared string leaked Korean into the
-    English line whenever the archive had no year."""
-    year_en = year or 'date unknown'
-    year_ko = year or '연대미상'
+    rather than leaving a blank one. Only the English header carries the date
+    (📅 {header_date}); the Korean block is the title alone, so the date line is
+    not repeated. When the caption stated a precise date, date_en carries it
+    (e.g. '17 July 1968') and it replaces the bare year in the header; otherwise
+    the header falls back to the year (or 'date unknown')."""
+    header_date = date_en or year or 'date unknown'
 
     # Calculate fixed overhead: everything except desc_en
     # tags as plain text for length check: '#Seoul #Korea #History #서울 #역사'
     tags_plain = ' '.join(f'#{t}' for t, _ in TAGS)
     body = (
-        f'📅 {year_en}\n\n'
+        f'📅 {header_date}\n\n'
         f'X {title_en}\n'
         f'{{DESC}}\n\n'
-        f'📅 {year_ko}\n\n'
         f'{title_ko}\n\n'
         f'{tags_plain}\n'
         f'🗃️ Seoul Metropolitan Archives'
@@ -361,7 +362,7 @@ def format_post(title_en, desc_en, title_ko, year, item_id):
     en_block = (f'{topic_emoji} {title_en}\n{desc_en}' if desc_en
                 else f'{topic_emoji} {title_en}')
     tb = client_utils.TextBuilder()
-    tb.text(f'📅 {year_en}\n\n{en_block}\n\n📅 {year_ko}\n\n{title_ko}\n\n')
+    tb.text(f'📅 {header_date}\n\n{en_block}\n\n{title_ko}\n\n')
     for i, (tag, tag_label) in enumerate(TAGS):
         if i > 0:
             tb.text(' ')
@@ -417,14 +418,17 @@ def main():
     translation = translate(item['title'], item['description'], item['year'])
     title_en = group_thousands(educate_quotes(translation['title']))
     desc_en = group_thousands(educate_quotes(translation['description']))
+    date_en = (translation.get('date') or '').strip()
     print(f'  EN title: {title_en}')
     print(f'  EN desc:  {desc_en}')
+    if date_en:
+        print(f'  Precise date: {date_en}')
     if desc_restates_title(title_en, desc_en):
         print('  EN desc restates the title — dropped.')
         desc_en = ''
 
     # Format post
-    post_text = format_post(title_en, desc_en, item['title'], item['year'], item['id'])
+    post_text = format_post(title_en, desc_en, item['title'], item['year'], item['id'], date_en)
     post_plain = post_text.build_text()
     print(f'\nPost ({len(post_plain)} chars):\n{"-"*40}\n{post_plain}\n{"-"*40}')
 
