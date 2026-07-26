@@ -335,18 +335,20 @@ def format_post(title_en, desc_en, title_ko, year, item_id, date_en=''):
     """Build a TextBuilder with proper hashtag facets, trimming if needed.
 
     An empty desc_en (dropped as a restatement) omits the description line
-    rather than leaving a blank one. Only the English header carries the date
-    (📅 {header_date}); the Korean block is the title alone, so the date line is
-    not repeated. When the caption stated a precise date, date_en carries it
-    (e.g. '17 July 1968') and it replaces the bare year in the header; otherwise
-    the header falls back to the year (or 'date unknown')."""
+    rather than leaving a blank one. The header carries the date as a bare
+    line (no calendar emoji: Apple draws that glyph as a fixed 'JUL 17', which
+    would contradict every date that isn't 17 July). The Korean block is the
+    title alone, so the date line is not repeated. When the caption stated a
+    precise date, date_en carries it (e.g. '17 July 1968') and it replaces the
+    bare year in the header; otherwise the header falls back to the year (or
+    'date unknown')."""
     header_date = date_en or year or 'date unknown'
 
     # Calculate fixed overhead: everything except desc_en
     # tags as plain text for length check: '#Seoul #Korea #History #서울 #역사'
     tags_plain = ' '.join(f'#{t}' for t, _ in TAGS)
     body = (
-        f'📅 {header_date}\n\n'
+        f'{header_date}\n\n'
         f'X {title_en}\n'
         f'{{DESC}}\n\n'
         f'{title_ko}\n\n'
@@ -362,7 +364,7 @@ def format_post(title_en, desc_en, title_ko, year, item_id, date_en=''):
     en_block = (f'{topic_emoji} {title_en}\n{desc_en}' if desc_en
                 else f'{topic_emoji} {title_en}')
     tb = client_utils.TextBuilder()
-    tb.text(f'📅 {header_date}\n\n{en_block}\n\n{title_ko}\n\n')
+    tb.text(f'{header_date}\n\n{en_block}\n\n{title_ko}\n\n')
     for i, (tag, tag_label) in enumerate(TAGS):
         if i > 0:
             tb.text(' ')
