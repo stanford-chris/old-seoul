@@ -344,10 +344,10 @@ def format_post(title_en, desc_en, title_ko, year, item_id):
     # tags as plain text for length check: '#Seoul #Korea #History #서울 #역사'
     tags_plain = ' '.join(f'#{t}' for t, _ in TAGS)
     body = (
-        f'📍 Seoul, {year_en}\n\n'
+        f'📅 {year_en}\n\n'
         f'X {title_en}\n'
         f'{{DESC}}\n\n'
-        f'서울, {year_ko}\n\n'
+        f'📅 {year_ko}\n\n'
         f'{title_ko}\n\n'
         f'{tags_plain}\n'
         f'🗃️ Seoul Metropolitan Archives'
@@ -361,7 +361,7 @@ def format_post(title_en, desc_en, title_ko, year, item_id):
     en_block = (f'{topic_emoji} {title_en}\n{desc_en}' if desc_en
                 else f'{topic_emoji} {title_en}')
     tb = client_utils.TextBuilder()
-    tb.text(f'📍 Seoul, {year_en}\n\n{en_block}\n\n서울, {year_ko}\n\n{title_ko}\n\n')
+    tb.text(f'📅 {year_en}\n\n{en_block}\n\n📅 {year_ko}\n\n{title_ko}\n\n')
     for i, (tag, tag_label) in enumerate(TAGS):
         if i > 0:
             tb.text(' ')
