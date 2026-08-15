@@ -23,13 +23,50 @@ from pathlib import Path
 
 from atproto import Client, client_utils
 
+import alt_log
 import image_alt
 import net_guard
 
 ARCHIVE = Path(__file__).parent / 'seoul_archive.json'
+# One JSONL line per posted item, recording the alt text that shipped and
+# whether it was generated or fell back. Written only on a real post, and
+# best-effort: see alt_log.
+ALT_LOG = Path(__file__).parent / 'alt_history.jsonl'
 HANDLE = 'oldhanyang.bsky.social'
 KEYCHAIN_SERVICE = 'seoulbot-bluesky'
+
+# Refuse anything unrecognised. Until August 2026 this was a bare membership
+# test, so an unknown flag (`--help` above all) fell through to a LIVE post:
+# the same trap that published a real thread from seoul-index on 20 Jul 2026.
+_KNOWN_ARGS = {'--dry-run', '--tail'}
+
+
+def _tail_n(argv):
+    """N for `--tail [N]` (print recent alt text and exit), or None if absent.
+    N defaults to 10 and a bare integer right after --tail overrides it."""
+    if '--tail' not in argv:
+        return None
+    i = argv.index('--tail')
+    if i + 1 < len(argv) and argv[i + 1].isdigit():
+        return max(1, int(argv[i + 1]))
+    return 10
+
+
+if __name__ == '__main__':
+    _skip = None
+    if '--tail' in sys.argv:
+        _t = sys.argv.index('--tail')
+        if _t + 1 < len(sys.argv) and sys.argv[_t + 1].isdigit():
+            _skip = _t + 1
+    _unknown = [a for j, a in enumerate(sys.argv[1:], 1)
+                if a not in _KNOWN_ARGS and j != _skip]
+    if _unknown:
+        sys.exit(f'Unknown argument(s): {" ".join(_unknown)}. '
+                 f'Recognised: {" ".join(sorted(_KNOWN_ARGS))} [N]. '
+                 f'Refusing to run (a bare run posts live).')
+
 DRY_RUN = '--dry-run' in sys.argv
+TAIL_N = _tail_n(sys.argv)
 
 MAX_POST_CHARS = 290  # leave 10 char buffer under Bluesky's 300 limit
 
@@ -390,6 +427,12 @@ def fetch_image(url):
 
 
 def main():
+    # --tail is a read-only viewer: print recent alt text and exit before the
+    # archive, the network or any post. Never touches state.
+    if TAIL_N is not None:
+        alt_log.tail(ALT_LOG, TAIL_N)
+        return
+
     # Load archive
     if not ARCHIVE.exists():
         sys.exit(f'Error: {ARCHIVE} not found. Re-run seoul_harvest.py (~2.5 hrs).')
@@ -474,13 +517,14 @@ def main():
     context = f'{title_en} / {item["title"]} / {item["year"] or "year unknown"}'
     env = claude_env()
 
-    image_alts = []
+    image_alts, alt_generated = [], []
     for i, img in enumerate(images):
         desc = image_alt.describe(img, context=context, env=env)
         alt = f'{desc} {tail}' if desc else citation
         if len(images) > 1:
             alt = f'{alt} ({i + 1} of {len(images)})'
         image_alts.append(alt)
+        alt_generated.append(desc is not None)
         print(f'  alt {i + 1}/{len(images)}: {alt}')
 
     # The dry run now stops HERE rather than before the fetch. Alt text became
@@ -496,13 +540,28 @@ def main():
     bsky = Client()
     bsky.login(HANDLE, password)
 
-    bsky.send_images(
+    resp = bsky.send_images(
         text=post_text,
         images=images,
         image_alts=image_alts,
     )
 
     print('Posted successfully.')
+
+    # Record what shipped. `generated` is the flag worth watching: a failed
+    # model call falls back silently by design, which keeps posts going out and
+    # makes a run of failures invisible. A tail showing every recent post
+    # falling back means the description step is broken, not that the pictures
+    # resist description.
+    alt_log.append(ALT_LOG, {
+        'at': datetime.now(timezone.utc).astimezone().strftime('%Y-%m-%d %H:%M:%S'),
+        'id': item['id'],
+        'title': title_en,
+        'url': alt_log.post_url(HANDLE, getattr(resp, 'uri', None)),
+        'generated': all(alt_generated),
+        'generated_count': f'{sum(alt_generated)}/{len(alt_generated)}',
+        'alts': image_alts,
+    })
 
     # Mark as posted and record success timestamp in a small state file
     item['posted'] = True

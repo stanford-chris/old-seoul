@@ -19,3 +19,7 @@ venv/
 
 # Leftover from an interrupted atomic JSON write (write_json_atomic)
 *.json.tmp
+
+# One line per posted item, recording the alt text that shipped and whether it
+# was generated or fell back, for skimming output to catch duds (local log)
+alt_history.jsonl
