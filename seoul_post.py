@@ -23,6 +23,8 @@ from pathlib import Path
 
 from atproto import Client, client_utils
 
+import net_guard
+
 ARCHIVE = Path(__file__).parent / 'seoul_archive.json'
 HANDLE = 'oldhanyang.bsky.social'
 KEYCHAIN_SERVICE = 'seoulbot-bluesky'
@@ -396,6 +398,12 @@ def main():
     if not postable:
         print('No postable items remaining in archive.')
         sys.exit(0)
+
+    # Everything from here on needs the network: translate() shells out to
+    # `claude -p`, which raised EHOSTUNREACH on every firing through the
+    # August 2026 outage. Posts run twice daily, so half an hour of waiting is
+    # free. Gated after the archive checks above, which are purely local.
+    net_guard.require_network(1800)
 
     # Load rolling state early (used for the topic cooldown below and the
     # success timestamp at the end).
