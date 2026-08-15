@@ -1,15 +1,23 @@
 #!/usr/bin/env python3
 """
 Post one historical Seoul photo to Bluesky (@oldhanyang.bsky.social).
-Picks a random unposted item from seoul_archive.json, translates with Claude,
-posts with the image, and marks it as posted.
+Picks a random unposted item from the combined photo pools, translates with
+Claude, posts with the image, and marks it as posted in its own pool.
+
+Two pools (see SOURCES):
+  - seoul_archive.json   Seoul Metropolitan Archives, 1950s-90s municipal
+                         photography, dated, with Korean descriptions.
+  - seoul_dryplate.json  National Museum of Korea's 조선총독부박물관 glass plates,
+                         1909-1945, mostly undated and title-only. 공공누리
+                         제1유형, so the museum credit is mandatory.
 
 Requires:
     security add-generic-password -a "oldhanyang.bsky.social" -s "seoulbot-bluesky" -w
 
 Usage:
-    python3 seoul_post.py           # post one item
-    python3 seoul_post.py --dry-run # translate and format without posting
+    python3 seoul_post.py                      # post one item
+    python3 seoul_post.py --dry-run            # translate and format, no post
+    python3 seoul_post.py --source dryplate    # restrict the pool to one source
 """
 
 import json
@@ -28,6 +36,7 @@ import image_alt
 import net_guard
 
 ARCHIVE = Path(__file__).parent / 'seoul_archive.json'
+DRYPLATE = Path(__file__).parent / 'seoul_dryplate.json'
 # One JSONL line per posted item, recording the alt text that shipped and
 # whether it was generated or fell back. Written only on a real post, and
 # best-effort: see alt_log.
@@ -35,10 +44,40 @@ ALT_LOG = Path(__file__).parent / 'alt_history.jsonl'
 HANDLE = 'oldhanyang.bsky.social'
 KEYCHAIN_SERVICE = 'seoulbot-bluesky'
 
+# The two photo pools. They are posted from a single combined pool, so each
+# source's share of the feed is just its share of the unposted items.
+#
+# `dated`: the Seoul Metropolitan Archives records carry a usable year, so their
+# posts lead with it. The glass plates mostly do not — only 284 of 1,452 have a
+# 촬영 연도 at all — so leading with a year would mean printing "date unknown"
+# four posts in five. Those posts lead with the district instead, which is real
+# information the header never carried (the whole feed is Seoul, so the city
+# alone said nothing; see the 2026-07-26 header change).
+SOURCES = {
+    'archives': {
+        'path': ARCHIVE,
+        'link_label': '🗃️ Seoul Metropolitan Archives',
+        'item_url': 'https://archives.seoul.go.kr/item/{id}',
+        'alt_tail': 'Seoul Metropolitan Archives',
+        'alt_credit': '서울기록원',
+        'dated': True,
+    },
+    'dryplate': {
+        'path': DRYPLATE,
+        # 공공누리 제1유형 (출처표시): reuse is free, attribution is mandatory,
+        # so the museum credit is not decoration and must not be dropped.
+        'link_label': '🗃️ National Museum of Korea',
+        'item_url': 'https://www.museum.go.kr/dryplate/searchplate_view.do?relicnum={id}',
+        'alt_tail': 'National Museum of Korea, colonial-era glass plate',
+        'alt_credit': '국립중앙박물관 유리건판',
+        'dated': False,
+    },
+}
+
 # Refuse anything unrecognised. Until August 2026 this was a bare membership
 # test, so an unknown flag (`--help` above all) fell through to a LIVE post:
 # the same trap that published a real thread from seoul-index on 20 Jul 2026.
-_KNOWN_ARGS = {'--dry-run', '--tail'}
+_KNOWN_ARGS = {'--dry-run', '--tail', '--source'}
 
 
 def _tail_n(argv):
@@ -52,14 +91,33 @@ def _tail_n(argv):
     return 10
 
 
+def _source_filter(argv):
+    """Key for `--source <name>` (restrict the pool to one source), or None.
+
+    A testing and backfill aid: without it the pool is both sources combined.
+    """
+    if '--source' not in argv:
+        return None
+    i = argv.index('--source')
+    if i + 1 >= len(argv) or argv[i + 1] not in SOURCES:
+        sys.exit(f'--source needs one of: {" ".join(sorted(SOURCES))}.')
+    return argv[i + 1]
+
+
 if __name__ == '__main__':
-    _skip = None
+    # Indices of values belonging to a preceding flag, so they are not mistaken
+    # for unknown arguments.
+    _skip = set()
     if '--tail' in sys.argv:
         _t = sys.argv.index('--tail')
         if _t + 1 < len(sys.argv) and sys.argv[_t + 1].isdigit():
-            _skip = _t + 1
+            _skip.add(_t + 1)
+    if '--source' in sys.argv:
+        _s = sys.argv.index('--source')
+        if _s + 1 < len(sys.argv):
+            _skip.add(_s + 1)
     _unknown = [a for j, a in enumerate(sys.argv[1:], 1)
-                if a not in _KNOWN_ARGS and j != _skip]
+                if a not in _KNOWN_ARGS and j not in _skip]
     if _unknown:
         sys.exit(f'Unknown argument(s): {" ".join(_unknown)}. '
                  f'Recognised: {" ".join(sorted(_KNOWN_ARGS))} [N]. '
@@ -67,6 +125,7 @@ if __name__ == '__main__':
 
 DRY_RUN = '--dry-run' in sys.argv
 TAIL_N = _tail_n(sys.argv)
+SOURCE_FILTER = _source_filter(sys.argv)
 
 MAX_POST_CHARS = 290  # leave 10 char buffer under Bluesky's 300 limit
 
@@ -126,8 +185,68 @@ def write_json_atomic(path, data, **dumps_kwargs):
     os.replace(tmp, path)
 
 
+# The two pools store different field names for the same things, so everything
+# downstream goes through these accessors rather than indexing items directly.
+def item_id(item):
+    return item.get('id') or item.get('relicnum')
+
+
+def item_desc(item):
+    """Korean description, or '' where the source records none.
+
+    The glass plates have no description field at all: the catalogue gives a
+    title, a subject path and a place, and nothing prose-like. That empty string
+    is load-bearing — translate() must not be asked to write a description from
+    nothing, or it invents one.
+    """
+    return item.get('description') or ''
+
+
+def item_year(item):
+    return item.get('year') or ''
+
+
+def item_images(item):
+    """Image URLs as a list. The glass plates are one plate, one image."""
+    if item.get('images'):
+        return item['images']
+    return [item['image_url']] if item.get('image_url') else []
+
+
+# Seoul's 18 districts as they appear in the glass-plate region field, with the
+# city's own English names. Used for the header line on undated plates.
+DISTRICTS_EN = {
+    '강남구': 'Gangnam-gu', '강동구': 'Gangdong-gu', '광진구': 'Gwangjin-gu',
+    '노원구': 'Nowon-gu', '도봉구': 'Dobong-gu', '동대문구': 'Dongdaemun-gu',
+    '동작구': 'Dongjak-gu', '마포구': 'Mapo-gu', '서대문구': 'Seodaemun-gu',
+    '서초구': 'Seocho-gu', '성동구': 'Seongdong-gu', '성북구': 'Seongbuk-gu',
+    '송파구': 'Songpa-gu', '용산구': 'Yongsan-gu', '은평구': 'Eunpyeong-gu',
+    '종로구': 'Jongno-gu', '중구': 'Jung-gu', '중랑구': 'Jungnang-gu',
+}
+
+
+def item_district(item):
+    """English district name from the region path, or '' if it has none.
+
+    Region reads '한국_서울특별시_종로구'. Eleven of the 1,452 records stop at the
+    city, and those simply get no header line rather than a made-up one. Note
+    the region field is modern administrative geography while titles use the
+    period names, so the two can legitimately disagree (우이리 is filed under
+    Seoul but titled 경기 고양).
+    """
+    parts = (item.get('region') or '').split('_')
+    return DISTRICTS_EN.get(parts[2], '') if len(parts) > 2 else ''
+
+
 def translate(title_ko, description_ko, year):
-    """Translate Korean title and description to concise English via claude -p."""
+    """Translate Korean title and description to concise English via claude -p.
+
+    With no Korean description (the glass plates), only the title is translated
+    and the description comes back empty: asking for a description of a photo
+    the model cannot see would be invention, not translation.
+    """
+    if not description_ko:
+        return translate_title_only(title_ko)
     prompt = (
         f'Translate this Korean text from a historical Seoul photo archive into concise English.\n\n'
         f'Title (Korean): {title_ko}\n'
@@ -143,6 +262,35 @@ def translate(title_ko, description_ko, year):
         f'- date: the precise calendar date of the event ONLY if the Korean source explicitly states a specific day (e.g. 1968년 7월 17일, or 7월 17일). Format British: "17 July 1968". If a day and month are given without a year, complete it using the known Year above. If no specific day is stated, return an empty string. Never infer or guess a day.\n'
         f'- Return JSON only: {{"title": "...", "description": "...", "date": "..."}}'
     )
+    return _claude_json(prompt)
+
+
+def translate_title_only(title_ko):
+    """Translate a bare catalogue title, with no description invented.
+
+    The glass-plate titles are museum catalogue entries ('창덕궁 돈화문 공포'), so
+    the job is a faithful rendering of a named structure, not prose.
+    """
+    prompt = (
+        f'Translate this Korean title from a museum catalogue of historical '
+        f'Seoul photographs into concise English.\n\n'
+        f'Title (Korean): {title_ko}\n\n'
+        f'Rules:\n'
+        f'- Accurate, natural English, max 60 characters\n'
+        f'- These are catalogue entries for buildings, monuments and sites. '
+        f'Keep Korean proper nouns in Revised Romanisation (Gyeongbokgung, '
+        f'Donhwamun), and translate the architectural terms that follow them\n'
+        f'- Do not add interpretation, context or anything not in the Korean\n'
+        f'- Return JSON only: {{"title": "..."}}'
+    )
+    out = _claude_json(prompt)
+    # Downstream expects all three keys; only the title is ever populated here.
+    return {'title': out.get('title', ''), 'description': '', 'date': ''}
+
+
+def _claude_json(prompt):
+    """Run `claude -p` and parse a JSON object from its output, with one retry
+    on a timeout or malformed JSON."""
     for attempt in range(2):
         try:
             result = subprocess.run(
@@ -280,9 +428,11 @@ SEOUL_EMOJIS = [
       "마을", "동네", "주택", "아파트", "골목"], "🏘️"),
     # NB: bare 문/궁 dropped — 문 buried in 방문/신문/문화 (2,700+ items), 궁 in
     # 궁금. Specific gates and palaces kept.
+    # 궁궐 is the glass-plate catalogue's own term for a palace, and appears in
+    # its subject path rather than the title; unambiguous, so safe to match.
     (["palace", "fortress", "gate", "landmark", "historic", "heritage",
       "대문", "광화문", "독립문", "성문", "성곽", "문화재",
-      "경복궁", "창덕궁", "덕수궁", "창경궁", "고궁"], "🏯"),
+      "경복궁", "창덕궁", "덕수궁", "창경궁", "고궁", "궁궐"], "🏯"),
     (["sport", "stadium", "athletic", "olympic", "race",
       "스포츠", "경기장", "체육", "올림픽"], "🏅"),
     (["airport", "aircraft", "aviation", "flight",
@@ -339,12 +489,19 @@ def item_category(item):
     Used at selection time so cooldown candidates don't have to be translated
     first. The 📷 fallback means "uncategorised" — those items are visually
     varied already, so they are never placed on cooldown.
+
+    For the glass plates the classifiable text is the subject path
+    ('건축_건물_일반건축_궁궐') rather than free keywords, so it stands in for them.
+    That pool is ~79% architecture, so most of it lands on 🏯 and the cooldown
+    will hold plates back while a palace shot is recent — deliberately, since
+    otherwise the palaces would arrive in runs.
     """
     title_ko = item.get('title') or ''
-    desc_ko = item.get('description') or ''
+    desc_ko = item_desc(item)
     kw = item.get('keywords')
     kw_str = ' '.join(kw) if isinstance(kw, list) else (kw or '')
-    return pick_seoul_emoji('', desc_ko, f'{title_ko} {kw_str}')
+    subject = (item.get('subject') or '').replace('_', ' ')
+    return pick_seoul_emoji('', desc_ko, f'{title_ko} {kw_str} {subject}')
 
 
 # Words that add no information when they are all a description contributes
@@ -371,29 +528,44 @@ def desc_restates_title(title_en, desc_en):
     return not fresh
 
 
-def format_post(title_en, desc_en, title_ko, year, item_id, date_en=''):
+def post_header(item, source, date_en=''):
+    """The bare line above the caption, or '' for no header line at all.
+
+    A dated source leads with the date (no calendar emoji: Apple draws that
+    glyph as a fixed 'JUL 17', which would contradict every date that isn't
+    17 July). When the caption stated a precise day, date_en carries it
+    ('17 July 1968') and it replaces the bare year; otherwise the year, or
+    'date unknown'.
+
+    An undated source leads with the district instead. Printing 'date unknown'
+    on four posts in five would be a header that never says anything, so the
+    glass plates trade it for the one fact their catalogue does record. Where
+    even that is missing (11 of 1,452) the post simply has no header.
+    """
+    if source['dated']:
+        return date_en or item_year(item) or 'date unknown'
+    return date_en or item_district(item)
+
+
+def format_post(title_en, desc_en, title_ko, header, item_id, source):
     """Build a TextBuilder with proper hashtag facets, trimming if needed.
 
-    An empty desc_en (dropped as a restatement) omits the description line
-    rather than leaving a blank one. The header carries the date as a bare
-    line (no calendar emoji: Apple draws that glyph as a fixed 'JUL 17', which
-    would contradict every date that isn't 17 July). The Korean block is the
-    title alone, so the date line is not repeated. When the caption stated a
-    precise date, date_en carries it (e.g. '17 July 1968') and it replaces the
-    bare year in the header; otherwise the header falls back to the year (or
-    'date unknown')."""
-    header_date = date_en or year or 'date unknown'
-
+    An empty desc_en (dropped as a restatement, or never written because the
+    source has no description) omits the description line rather than leaving a
+    blank one. An empty header omits the header line and its blank line too.
+    The Korean block is the title alone, so the header is not repeated.
+    """
     # Calculate fixed overhead: everything except desc_en
     # tags as plain text for length check: '#Seoul #Korea #History #서울 #역사'
     tags_plain = ' '.join(f'#{t}' for t, _ in TAGS)
+    header_block = f'{header}\n\n' if header else ''
     body = (
-        f'{header_date}\n\n'
+        f'{header_block}'
         f'X {title_en}\n'
         f'{{DESC}}\n\n'
         f'{title_ko}\n\n'
         f'{tags_plain}\n'
-        f'🗃️ Seoul Metropolitan Archives'
+        f'{source["link_label"]}'
     )
     overhead = len(body) - len('{DESC}')
     max_desc = MAX_POST_CHARS - overhead
@@ -404,14 +576,13 @@ def format_post(title_en, desc_en, title_ko, year, item_id, date_en=''):
     en_block = (f'{topic_emoji} {title_en}\n{desc_en}' if desc_en
                 else f'{topic_emoji} {title_en}')
     tb = client_utils.TextBuilder()
-    tb.text(f'{header_date}\n\n{en_block}\n\n{title_ko}\n\n')
+    tb.text(f'{header_block}{en_block}\n\n{title_ko}\n\n')
     for i, (tag, tag_label) in enumerate(TAGS):
         if i > 0:
             tb.text(' ')
         tb.tag(f'#{tag}', tag_label)
     tb.text('\n')
-    archive_url = f'https://archives.seoul.go.kr/item/{item_id}'
-    tb.link('🗃️ Seoul Metropolitan Archives', archive_url)
+    tb.link(source['link_label'], source['item_url'].format(id=item_id))
 
     return tb
 
@@ -433,14 +604,29 @@ def main():
         alt_log.tail(ALT_LOG, TAIL_N)
         return
 
-    # Load archive
-    if not ARCHIVE.exists():
-        sys.exit(f'Error: {ARCHIVE} not found. Re-run seoul_harvest.py (~2.5 hrs).')
-    items = json.loads(ARCHIVE.read_text())
-    postable = [it for it in items if it.get('images') and not it.get('posted')]
+    # Load every pool into one combined candidate list. Each item is tagged with
+    # the key of the pool it came from, so the post format, the credit and the
+    # file to mark it in all follow the item rather than being global.
+    pools, postable = {}, []
+    for key, source in SOURCES.items():
+        if SOURCE_FILTER and key != SOURCE_FILTER:
+            continue
+        if not source['path'].exists():
+            # A missing pool is survivable while the other one has items: the
+            # bot posts from what it has rather than going silent.
+            print(f'Warning: {source["path"].name} not found — skipping {key}.')
+            continue
+        pools[key] = json.loads(source['path'].read_text())
+        for it in pools[key]:
+            it['_source'] = key
+        postable += [it for it in pools[key]
+                     if item_images(it) and not it.get('posted')]
 
+    if not pools:
+        sys.exit('Error: no photo pool found. Re-run the harvest scripts '
+                 '(seoul_harvest.py, ~2.5 hrs; seoul_dryplate_harvest.py, ~3 min).')
     if not postable:
-        print('No postable items remaining in archive.')
+        print('No postable items remaining in any pool.')
         sys.exit(0)
 
     # Everything from here on needs the network: translate() shells out to
@@ -465,11 +651,13 @@ def main():
     # Pick a random item
     item = random.choice(candidates)
     item_cat = item_category(item)
-    print(f'Selected: [{item["id"]}] {item["title"]} ({item["year"] or "?"}) topic={item_cat}')
+    source = SOURCES[item['_source']]
+    print(f'Selected: [{item_id(item)}] {item["title"]} '
+          f'({item_year(item) or "?"}) topic={item_cat} source={item["_source"]}')
 
     # Translate
     print('Translating...')
-    translation = translate(item['title'], item['description'], item['year'])
+    translation = translate(item['title'], item_desc(item), item_year(item))
     title_en = group_thousands(educate_quotes(translation['title']))
     desc_en = group_thousands(educate_quotes(translation['description']))
     date_en = (translation.get('date') or '').strip()
@@ -477,19 +665,21 @@ def main():
     print(f'  EN desc:  {desc_en}')
     if date_en:
         print(f'  Precise date: {date_en}')
-    if desc_restates_title(title_en, desc_en):
+    if desc_en and desc_restates_title(title_en, desc_en):
         print('  EN desc restates the title — dropped.')
         desc_en = ''
 
     # Format post
-    post_text = format_post(title_en, desc_en, item['title'], item['year'], item['id'], date_en)
+    header = post_header(item, source, date_en)
+    post_text = format_post(title_en, desc_en, item['title'], header,
+                            item_id(item), source)
     post_plain = post_text.build_text()
     print(f'\nPost ({len(post_plain)} chars):\n{"-"*40}\n{post_plain}\n{"-"*40}')
 
     # Fetch up to 4 images. For large sets, sample 4 frames spread across the
     # whole set (kept in original order) rather than the first 4, which in an
     # event set are near-identical opening frames.
-    all_images = item['images']
+    all_images = item_images(item)
     if len(all_images) > 4:
         idx = sorted(random.sample(range(len(all_images)), 4))
         image_urls = [all_images[i] for i in idx]
@@ -512,9 +702,15 @@ def main():
     # if the call fails, times out, or comes back unusable, the old citation is
     # still a valid caption and the post goes out with it. Up to four images
     # means up to four calls on a twice-daily job, which is affordable.
-    citation = f'{title_en} / {item["title"]} — {item["year"] or "연대미상"} — 서울기록원'
-    tail = f'Seoul Metropolitan Archives, {date_en or item["year"] or "date unknown"}.'
-    context = f'{title_en} / {item["title"]} / {item["year"] or "year unknown"}'
+    #
+    # The credit in both the citation and the tail is required, not decorative:
+    # the glass plates are 공공누리 제1유형, whose one condition is 출처표시.
+    year_ko = item_year(item) or '연대미상'
+    year_en = date_en or item_year(item) or 'date unknown'
+    citation = (f'{title_en} / {item["title"]} — {year_ko} — '
+                f'{source["alt_credit"]}')
+    tail = f'{source["alt_tail"]}, {year_en}.'
+    context = f'{title_en} / {item["title"]} / {item_year(item) or "year unknown"}'
     env = claude_env()
 
     image_alts, alt_generated = [], []
@@ -555,7 +751,8 @@ def main():
     # resist description.
     alt_log.append(ALT_LOG, {
         'at': datetime.now(timezone.utc).astimezone().strftime('%Y-%m-%d %H:%M:%S'),
-        'id': item['id'],
+        'id': item_id(item),
+        'source': item['_source'],
         'title': title_en,
         'url': alt_log.post_url(HANDLE, getattr(resp, 'uri', None)),
         'generated': all(alt_generated),
@@ -563,15 +760,21 @@ def main():
         'alts': image_alts,
     })
 
-    # Mark as posted and record success timestamp in a small state file
+    # Mark as posted, in the pool the item actually came from. `_source` is an
+    # in-memory tag, so it is stripped before the pool is written back.
     item['posted'] = True
-    write_json_atomic(ARCHIVE, items, ensure_ascii=False, indent=2)
+    pool = pools[item['_source']]
+    write_json_atomic(source['path'],
+                      [{k: v for k, v in it.items() if k != '_source'}
+                       for it in pool],
+                      ensure_ascii=False, indent=2)
     state['last_success_at'] = datetime.now(timezone.utc).isoformat()
     if item_cat != '📷':
         recent_categories.append(item_cat)
         state['recent_categories'] = recent_categories[-CATEGORY_COOLDOWN:]
     write_json_atomic(state_file, state, ensure_ascii=False, indent=2)
-    print(f'Marked [{item["id"]}] as posted. {len(postable) - 1} items remaining.')
+    print(f'Marked [{item_id(item)}] as posted in {item["_source"]}. '
+          f'{len(postable) - 1} items remaining across all pools.')
 
 
 if __name__ == '__main__':

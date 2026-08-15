@@ -1,5 +1,7 @@
-# Harvested photo pool (built by seoul_harvest.py; large, ~thousands of items)
+# Harvested photo pools (built by the harvest scripts; large, and they carry the
+# mutable `posted` flags, so they are runtime state rather than source)
 seoul_archive.json
+seoul_dryplate.json
 
 # Runtime state (last-success timestamp)
 seoul_state.json
