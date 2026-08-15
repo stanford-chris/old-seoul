@@ -23,6 +23,7 @@ from pathlib import Path
 
 from atproto import Client, client_utils
 
+import image_alt
 import net_guard
 
 ARCHIVE = Path(__file__).parent / 'seoul_archive.json'
@@ -442,10 +443,6 @@ def main():
     post_plain = post_text.build_text()
     print(f'\nPost ({len(post_plain)} chars):\n{"-"*40}\n{post_plain}\n{"-"*40}')
 
-    if DRY_RUN:
-        print('(dry run — not posting)')
-        return
-
     # Fetch up to 4 images. For large sets, sample 4 frames spread across the
     # whole set (kept in original order) rather than the first 4, which in an
     # event set are near-identical opening frames.
@@ -460,11 +457,39 @@ def main():
         print(f'Fetching image: {url}')
         images.append(fetch_image(url))
 
-    base_alt = f'{title_en} / {item["title"]} — {item["year"] or "연대미상"} — 서울기록원'
-    if len(images) == 1:
-        image_alts = [base_alt]
-    else:
-        image_alts = [f'{base_alt} ({i + 1} of {len(images)})' for i in range(len(images))]
+    # Alt text describes the PHOTOGRAPH, with provenance as a short tail.
+    #
+    # Until August 2026 the alt was the citation alone: title, year, archive.
+    # That is provenance, not description, and it restated the post text almost
+    # word for word, so a screen reader read the same line twice and conveyed
+    # nothing about the picture. On a bot whose whole content is the picture,
+    # that was the weakest alt in the estate.
+    #
+    # image_alt.describe() shows the model the actual image. It is best-effort:
+    # if the call fails, times out, or comes back unusable, the old citation is
+    # still a valid caption and the post goes out with it. Up to four images
+    # means up to four calls on a twice-daily job, which is affordable.
+    citation = f'{title_en} / {item["title"]} — {item["year"] or "연대미상"} — 서울기록원'
+    tail = f'Seoul Metropolitan Archives, {date_en or item["year"] or "date unknown"}.'
+    context = f'{title_en} / {item["title"]} / {item["year"] or "year unknown"}'
+    env = claude_env()
+
+    image_alts = []
+    for i, img in enumerate(images):
+        desc = image_alt.describe(img, context=context, env=env)
+        alt = f'{desc} {tail}' if desc else citation
+        if len(images) > 1:
+            alt = f'{alt} ({i + 1} of {len(images)})'
+        image_alts.append(alt)
+        print(f'  alt {i + 1}/{len(images)}: {alt}')
+
+    # The dry run now stops HERE rather than before the fetch. Alt text became
+    # generated content in August 2026, so previewing a post without it would
+    # leave the half most worth checking unreviewed. The cost is that a dry run
+    # fetches the images and spends a model call on each.
+    if DRY_RUN:
+        print('(dry run — not posting)')
+        return
 
     # Post to Bluesky
     password = keychain_password(HANDLE, KEYCHAIN_SERVICE)
