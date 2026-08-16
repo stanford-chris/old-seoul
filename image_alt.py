@@ -60,6 +60,8 @@ Describe what is actually VISIBLE: the subject, the setting, the composition, an
 
 Rules:
 - Describe only what you can see. Never state names, dates, places or events that are not visually evident, however likely they seem.
+- That includes people: do not assign gender, age or role from clothing, hair or the caption. Write "four people" or "a figure seated on the ground" unless the photograph itself puts it beyond doubt.
+- Attribute a detail only to the figures it is actually visible on. If three of four are barefoot, say three.
 - Open by naming the medium where it is not obvious, e.g. "Black-and-white photograph" or "Pen-and-ink illustration".
 - Do not restate the caption below. It is read out separately, and repeating it is the flaw this replaces. Use it only to avoid contradicting what is known.
 - UK English. No emoji, no markdown, no surrounding quotation marks.
