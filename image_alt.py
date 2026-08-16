@@ -35,6 +35,25 @@ TIMEOUT = 120
 MAX_CHARS = 600
 MIN_CHARS = 20
 
+# Prefixed by callers to any alt text built from describe()'s output.
+#
+# The bot's bio says the descriptions are generated, but a bio is on the
+# profile and alt text travels without it: into a feed, a repost, a quote
+# post, an embed. The reader who most needs to know is the one least likely
+# to have seen it.
+#
+# It leads rather than trails because it exists to calibrate. Heard after the
+# description, the listener has already built a picture on the assumption
+# that someone looked at the photograph. Heard first, they weigh the rest as
+# they go. Three words is a fair price for that, on descriptions the audience
+# for alt text is by definition unable to check.
+#
+# Callers must apply it ONLY to generated text. Every caller here also has an
+# attribution-only fallback for when describe() returns None, and that string
+# is catalogue metadata written by a human. Labelling it would be a false
+# claim in the opposite direction.
+DISCLOSURE = 'A.I.-generated description.'
+
 _PROMPT = """Write alt text for a blind reader of a social media post, describing the image ./{name}
 
 Describe what is actually VISIBLE: the subject, the setting, the composition, any notable detail. One or two sentences, 40 words at most.

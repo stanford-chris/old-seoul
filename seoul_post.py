@@ -716,7 +716,9 @@ def main():
     image_alts, alt_generated = [], []
     for i, img in enumerate(images):
         desc = image_alt.describe(img, context=context, env=env)
-        alt = f'{desc} {tail}' if desc else citation
+        # The disclosure rides the generated branch only: the citation
+        # fallback is the archive's own catalogue entry, not model output.
+        alt = (f'{image_alt.DISCLOSURE} {desc} {tail}' if desc else citation)
         if len(images) > 1:
             alt = f'{alt} ({i + 1} of {len(images)})'
         image_alts.append(alt)
