@@ -257,6 +257,7 @@ def translate(title_ko, description_ko, year):
         f'- Description translation: one clear sentence, max 100 characters\n'
         f'- Description must not restate or repeat the title — add new information (who, what is happening, context)\n'
         f'- Do not add interpretation or extra context\n'
+        f'- Quote with double quotation marks, never single ones — a "comfort women" camp, not a \'comfort women\' camp\n'
         f'- Use British date format for any dates (e.g. 9 June 1972, not June 9 1972 or 06/09/1972)\n'
         f'- Write quantities of one thousand or more with thousands separators (e.g. 3,000 officials, 25,000 spectators), but never put a separator in a year (write 1972, not 1,972)\n'
         f'- date: the precise calendar date of the event ONLY if the Korean source explicitly states a specific day (e.g. 1968년 7월 17일, or 7월 17일). Format British: "17 July 1968". If a day and month are given without a year, complete it using the known Year above. If no specific day is stated, return an empty string. Never infer or guess a day.\n'
@@ -280,6 +281,7 @@ def translate_title_only(title_ko):
         f'- These are catalogue entries for buildings, monuments and sites. '
         f'Keep Korean proper nouns in Revised Romanisation (Gyeongbokgung, '
         f'Donhwamun), and translate the architectural terms that follow them\n'
+        f'- Quote with double quotation marks, never single ones\n'
         f'- Do not add interpretation, context or anything not in the Korean\n'
         f'- Return JSON only: {{"title": "..."}}'
     )
@@ -320,6 +322,33 @@ def _claude_json(prompt):
             raise RuntimeError(f'claude -p returned invalid JSON after 2 attempts: {repr(text[:200])}')
 
 
+def promote_single_quotes(text):
+    """Rewrite paired single quotation marks as double ones.
+
+    House style quotes with " ", and the translate() prompt says so, but the
+    model returns 'like this' often enough that the instruction alone cannot
+    be relied on. Only a matched pair is promoted: a lone ' is an apostrophe
+    (don't, 1970's, the '60s), and a closer must not be followed by a letter
+    or digit, so the apostrophe inside a quoted contraction ('don't stop')
+    cannot be mistaken for the closing mark.
+    """
+    out = list(text)
+    open_at = None
+    for i, ch in enumerate(out):
+        if ch != "'":
+            continue
+        prev = text[i - 1] if i > 0 else ''
+        nxt = text[i + 1] if i + 1 < len(text) else ''
+        if ((i == 0) or prev.isspace() or prev in '([{') and not nxt.isspace():
+            if open_at is None:
+                open_at = i
+        elif open_at is not None and not nxt.isalnum():
+            out[open_at] = '"'
+            out[i] = '"'
+            open_at = None
+    return ''.join(out)
+
+
 def educate_quotes(text):
     """Convert straight ASCII quotes/apostrophes to typographic (curly) marks.
 
@@ -330,19 +359,29 @@ def educate_quotes(text):
     opens (left); anything else closes (right), which also turns in-word
     apostrophes (don't, it's, 1970's) into the right single quote. Only the
     English fields are passed through this — Korean text is left untouched.
+
+    Curly marks in the model's output are flattened to straight ones first, so
+    text that arrives already typeset goes through the same pairing rules and
+    the same promotion of single-quoted phrases to double.
     """
     if not text:
         return text
     left_single, right_single = '‘', '’'
     left_double, right_double = '“', '”'
+    text = (text.replace(left_double, '"').replace(right_double, '"')
+                .replace(left_single, "'").replace(right_single, "'"))
+    text = promote_single_quotes(text)
     out = []
     for i, ch in enumerate(text):
         prev = text[i - 1] if i > 0 else ''
+        nxt = text[i + 1] if i + 1 < len(text) else ''
         opening = (i == 0) or prev.isspace() or prev in '([{'
         if ch == '"':
             out.append(left_double if opening else right_double)
         elif ch == "'":
-            out.append(left_single if opening else right_single)
+            # A surviving ' before a digit is an elision, not an opener: the
+            # '60s. Anything paired has already become a double quote above.
+            out.append(left_single if opening and not nxt.isdigit() else right_single)
         else:
             out.append(ch)
     return ''.join(out)
