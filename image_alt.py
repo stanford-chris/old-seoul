@@ -115,10 +115,21 @@ _LEAD_IN = re.compile(r"""
     :\s*
 """, re.IGNORECASE | re.VERBOSE)
 
-# How many sentences may be dropped from each end. A leak is a remark or two
-# bolted onto a real description; a response that is meta all the way through
-# is not one worth salvaging.
-_MAX_STRIPPED = 2
+# How many sentences may be dropped from the END. A sign-off runs to a line or
+# two ("Let me know if you want it shorter"), so a bound costs nothing there.
+#
+# There is deliberately no bound on the START. A preamble has no natural
+# length: the model can reason for several sentences before arriving at the
+# description. The aside that shipped on 16 August 2026 was exactly two
+# sentences, which the original bound of two-from-each-end caught by a margin
+# of nothing; a third would have gone out with it.
+#
+# Removing the bound does not risk the interior, because stripping still stops
+# at the first sentence that is not meta. The case it changes is a response
+# that is meta the whole way down: that now comes back empty rather than
+# half-salvaged, falls short of MIN_CHARS in describe(), and the caller uses
+# the citation. A plain citation is the right outcome there.
+_MAX_STRIPPED_TRAILING = 2
 
 
 def _is_meta(sentence):
@@ -128,11 +139,12 @@ def _is_meta(sentence):
 def _strip_meta(text, log=print):
     """Drop operator-facing remarks from the ends of a description.
 
-    Only the ends, and only `_MAX_STRIPPED` sentences from each: a real
-    description can then never be cut out of the interior. If everything is
-    meta the result comes back empty, falls short of MIN_CHARS in describe()
-    and the caller uses the citation, which is the right outcome. Better a
-    plain citation than a salvaged fragment of a hallucinated answer.
+    Only the ends, so a real description is never cut out of the interior:
+    the front strips until it meets a sentence that is not meta, and the back
+    is bounded by `_MAX_STRIPPED_TRAILING`. If everything is meta the result
+    comes back empty, falls short of MIN_CHARS in describe() and the caller
+    uses the citation, which is the right outcome. Better a plain citation
+    than a salvaged fragment of a hallucinated answer.
     """
     dropped = []
     lead = _LEAD_IN.match(text)
@@ -143,9 +155,9 @@ def _strip_meta(text, log=print):
     parts = [p for p in _SENTENCE.split(text) if p.strip()]
 
     start, end = 0, len(parts)
-    while start < end and start < _MAX_STRIPPED and _is_meta(parts[start]):
+    while start < end and _is_meta(parts[start]):
         start += 1
-    while end > start and (len(parts) - end) < _MAX_STRIPPED \
+    while end > start and (len(parts) - end) < _MAX_STRIPPED_TRAILING \
             and _is_meta(parts[end - 1]):
         end -= 1
 
