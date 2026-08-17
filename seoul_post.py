@@ -49,11 +49,11 @@ KEYCHAIN_SERVICE = 'seoulbot-bluesky'
 #
 # `dated`: the Seoul Metropolitan Archives records carry a usable year, so their
 # posts lead with it. The glass plates mostly do not — only 284 of 1,452 have a
-# 촬영 연도 at all — so leading with a year would mean printing "date unknown"
-# four posts in five. Those posts lead with the district instead, which is real
-# information the header never carried (the whole feed is Seoul, so the city
-# alone said nothing; see the 2026-07-26 header change). Where a plate *does*
-# carry a year, the header now prints both: see post_header.
+# 촬영 연도 at all — so a date alone would be "date unknown" four posts in five.
+# Those posts lead with the district, which is real information the header never
+# carried (the whole feed is Seoul, so the city alone said nothing; see the
+# 2026-07-26 header change), and follow it with the year or, where the catalogue
+# has none, "date unknown". See post_header.
 SOURCES = {
     'archives': {
         'path': ARCHIVE,
@@ -618,10 +618,19 @@ def post_header(item, source, date_en=''):
     under a header that gave no date at all. Those now print both, district
     first ('Jongno-gu, 1946'), which keeps the district's new information and
     stops the post contradicting its own alt text.
+
+    The rest say 'Jongno-gu, date unknown' (user, 17 August 2026). The August
+    15th rule dropped the date from the plates entirely on the grounds that
+    'date unknown' four posts in five was a header saying nothing. It says
+    something now that it no longer stands alone: the district carries the
+    information, and the missing year is stated rather than left for a reader
+    to assume the photograph is undatable or, worse, that we simply didn't say.
+    It also matches what the archives pool has always printed for a year it
+    doesn't have.
     """
+    when = date_en or item_year(item) or 'date unknown'
     if source['dated']:
-        return date_en or item_year(item) or 'date unknown'
-    when = date_en or item_year(item)
+        return when
     return ', '.join(part for part in (item_district(item), when) if part)
 
 
