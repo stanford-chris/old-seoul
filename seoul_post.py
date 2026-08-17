@@ -52,7 +52,8 @@ KEYCHAIN_SERVICE = 'seoulbot-bluesky'
 # 촬영 연도 at all — so leading with a year would mean printing "date unknown"
 # four posts in five. Those posts lead with the district instead, which is real
 # information the header never carried (the whole feed is Seoul, so the city
-# alone said nothing; see the 2026-07-26 header change).
+# alone said nothing; see the 2026-07-26 header change). Where a plate *does*
+# carry a year, the header now prints both: see post_header.
 SOURCES = {
     'archives': {
         'path': ARCHIVE,
@@ -68,7 +69,9 @@ SOURCES = {
         # so the museum credit is not decoration and must not be dropped.
         'link_label': '🗃️ National Museum of Korea',
         'item_url': 'https://www.museum.go.kr/dryplate/searchplate_view.do?relicnum={id}',
-        'alt_tail': 'National Museum of Korea, colonial-era glass plate',
+        'alt_tail': 'National Museum of Korea',
+        'alt_object': 'glass plate',
+        'alt_period': 'colonial-era',
         'alt_credit': '국립중앙박물관 유리건판',
         'dated': False,
     },
@@ -567,6 +570,34 @@ def desc_restates_title(title_en, desc_en):
     return not fresh
 
 
+# The Government-General museum's plates are catalogued as colonial-era, and
+# for all but ten of the 284 with a known year that is exactly what they are.
+# The exceptions are one 1899 plate and nine shot in 1946-49, after liberation.
+# The window opens at 1909, the collection's own earliest year (36 plates) and
+# a year before annexation, rather than at 1910: the museum dates the set
+# 1909-1945, and second-guessing that would stop the label on its own opening.
+COLONIAL_YEARS = range(1909, 1946)
+
+
+def alt_tail(source, item, year_en):
+    """Provenance tail for generated alt text: credit, what it is, when.
+
+    The period label is dropped when the catalogue's own year contradicts it,
+    so a 1946 photograph is no longer read out as colonial-era. A plate with no
+    year keeps the label: an undated plate in this collection is a colonial
+    plate by every other piece of evidence, and dropping the period there would
+    lose real context on 80% of the pool to protect against nothing.
+    """
+    obj = source.get('alt_object', '')
+    period = source.get('alt_period', '')
+    if obj and period:
+        year = re.search(r'\d{4}', item_year(item))
+        if not year or int(year.group()) in COLONIAL_YEARS:
+            obj = f'{period} {obj}'
+    parts = [source['alt_tail']] + ([obj] if obj else []) + [year_en]
+    return ', '.join(parts) + '.'
+
+
 def post_header(item, source, date_en=''):
     """The bare line above the caption, or '' for no header line at all.
 
@@ -580,10 +611,18 @@ def post_header(item, source, date_en=''):
     on four posts in five would be a header that never says anything, so the
     glass plates trade it for the one fact their catalogue does record. Where
     even that is missing (11 of 1,452) the post simply has no header.
+
+    'Undated' is the pool's habit, not a property of every plate in it: 284 of
+    the 1,452 do carry a 촬영 연도, and until August 2026 the header threw it
+    away, so a plate whose year the alt text stated ('… 1946.') was published
+    under a header that gave no date at all. Those now print both, district
+    first ('Jongno-gu, 1946'), which keeps the district's new information and
+    stops the post contradicting its own alt text.
     """
     if source['dated']:
         return date_en or item_year(item) or 'date unknown'
-    return date_en or item_district(item)
+    when = date_en or item_year(item)
+    return ', '.join(part for part in (item_district(item), when) if part)
 
 
 def format_post(title_en, desc_en, title_ko, header, item_id, source):
@@ -748,7 +787,7 @@ def main():
     year_en = date_en or item_year(item) or 'date unknown'
     citation = (f'{title_en} / {item["title"]} — {year_ko} — '
                 f'{source["alt_credit"]}')
-    tail = f'{source["alt_tail"]}, {year_en}.'
+    tail = alt_tail(source, item, year_en)
     context = f'{title_en} / {item["title"]} / {item_year(item) or "year unknown"}'
     env = claude_env()
 

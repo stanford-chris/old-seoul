@@ -23,7 +23,10 @@ with the date. The glass plates are catalogue entries: title, subject path and
 place, with no description and a 촬영 연도 on only 284 of the 1,452. Leading with
 a date would print "date unknown" on four posts in five, so those posts lead
 with the district instead and no description is written for them — inventing one
-from a title the model cannot check would be fabrication, not translation.
+from a title the model cannot check would be fabrication, not translation. The
+284 plates that do carry a year print both, district first ("Jongno-gu, 1946"):
+the year was previously dropped from the header while the alt text still stated
+it, so the post contradicted its own description.
 
 ## How it works
 
