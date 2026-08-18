@@ -580,7 +580,11 @@ COLONIAL_YEARS = range(1909, 1946)
 
 
 def alt_tail(source, item, year_en):
-    """Provenance tail for generated alt text: credit, what it is, when.
+    """Provenance for generated alt text: credit, what it is, when.
+
+    Named for the `alt_tail` field it reads, which is a leftover: since 18
+    August 2026 this leads the alt rather than trailing it, so that the
+    A.I. disclosure sits next to the generated description alone.
 
     The period label is dropped when the catalogue's own year contradicts it,
     so a 1946 photograph is no longer read out as colonial-era. A plate with no
@@ -777,7 +781,7 @@ def main():
         print(f'Fetching image: {url}')
         images.append(fetch_image(url))
 
-    # Alt text describes the PHOTOGRAPH, with provenance as a short tail.
+    # Alt text describes the PHOTOGRAPH, behind a short provenance lead.
     #
     # Until August 2026 the alt was the citation alone: title, year, archive.
     # That is provenance, not description, and it restated the post text almost
@@ -803,11 +807,28 @@ def main():
     image_alts, alt_generated = [], []
     for i, img in enumerate(images):
         desc = image_alt.describe(img, context=context, env=env)
+        # Provenance FIRST, then the disclosure, then the description.
+        #
+        # Until 18 August 2026 the disclosure led the whole string and the
+        # provenance tail trailed it, so a listener heard "A.I.-generated
+        # description." as a header over everything that followed, the
+        # archive's own credit and year included. That labels a human
+        # catalogued fact as model output, which is the exact inverse of what
+        # the disclosure is for. Leading with the provenance puts the
+        # trustworthy statement first and leaves the disclosure adjacent to
+        # the only text it covers. holmes_post.py was corrected the same day,
+        # for the same reason, in the same shape.
+        #
+        # The counter goes with the provenance rather than the description for
+        # the same reason: which of four images this is, is counted here, not
+        # seen by the model.
+        #
         # The disclosure rides the generated branch only: the citation
         # fallback is the archive's own catalogue entry, not model output.
-        alt = (f'{image_alt.DISCLOSURE} {desc} {tail}' if desc else citation)
+        lead = tail if desc else citation
         if len(images) > 1:
-            alt = f'{alt} ({i + 1} of {len(images)})'
+            lead = f'{lead} ({i + 1} of {len(images)})'
+        alt = f'{lead} {image_alt.DISCLOSURE} {desc}' if desc else lead
         image_alts.append(alt)
         alt_generated.append(desc is not None)
         print(f'  alt {i + 1}/{len(images)}: {alt}')
