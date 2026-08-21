@@ -182,5 +182,27 @@ def main():
     print(f'\nDone. Archive: {len(items_by_id)} items, {postable} postable.')
 
 
+# Refuse anything unrecognised before the flags below are read. Bare membership
+# tests silently ignore what they do not recognise, so a typo (`--sampel`) or a
+# reflex (`--help`) reads as no flag at all and takes the ordinary path.
+# seoul-index published a real thread that way on 20 July 2026. The posting
+# bots in these repos were given this guard then; the harvest scripts were not,
+# which is what harden_audit.sh check 10 was still reporting on 21 August 2026.
+# Without the guard a mistyped --sample harvests the whole archive.
+_KNOWN_ARGS = {'--sample'}
+
 if __name__ == '__main__':
+    # The integer after --sample belongs to that flag, so it must not be read
+    # as an unknown argument.
+    _skip = set()
+    if '--sample' in sys.argv:
+        _s = sys.argv.index('--sample')
+        if _s + 1 < len(sys.argv) and sys.argv[_s + 1].isdigit():
+            _skip.add(_s + 1)
+    _unknown = [a for j, a in enumerate(sys.argv[1:], 1)
+                if a not in _KNOWN_ARGS and j not in _skip]
+    if _unknown:
+        sys.exit(f'Unknown argument(s): {" ".join(_unknown)}. '
+                 f'Recognised: {" ".join(sorted(_KNOWN_ARGS))} [N]. '
+                 f'Refusing to run.')
     main()
