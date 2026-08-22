@@ -189,6 +189,21 @@ like it should have.** Measured across the 62 adverts: 140 characters fits 6% to
 29% of them and 100 fits 96%, because a gazette headline is far longer than a
 photo caption. `format_post` trims at a word boundary for the rest.
 
+**A signed drawing credits its artist**: `✏️ 정운경` sits above the source
+credit. ⚠️ The name comes from the record's OWN title, never from the slot.
+Four of the 107 name nobody the source can confirm, and they get no credit
+line: printing the slot's usual artist over a drawing the archives left
+unsigned would be an attribution we invented. Adverts have no artist and get
+no line.
+
+⚠️ **Eight of the 107 are wordless** — title and transcription hold nothing but
+the tag and the artist's name — and `gazette_has_words` skips the model
+entirely for those, posting them under the slot name alone. Asked to translate
+nothing, the model replied `{"gist": "Artist name"}` and then explained itself
+in prose after the closing fence, which was invalid JSON and took the whole run
+down. `_first_json_object` now recovers a trailing-prose reply rather than
+spending a retry on it, for every prompt in the file.
+
 `capitalize_after_colon` capitalises the first word after a colon, so a title
 built as `<strip name>: <gist>` reads "Cartoon: The subway races ahead". House
 style, enforced in code for the reason `promote_single_quotes` exists: an

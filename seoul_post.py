@@ -141,6 +141,9 @@ SOURCES = {
         # An item is a region of a page: the picture has to be cut out of the
         # page scan after it is fetched. See crop_article.
         'crop': True,
+        # The cartoons are signed work, so the post credits the artist above
+        # the archive. Only where the record names one: see gazette_artist.
+        'credit_artist': True,
         # The slots above, and only where the archives gave the article a box
         # to cut to. See gazette_postable for the extra condition a notice has
         # to meet.
@@ -308,6 +311,52 @@ def item_images(item):
     return [item['image_url']] if item.get('image_url') else []
 
 
+# The cartoonist, credited from the record's OWN title rather than assumed from
+# the slot.
+#
+# ⚠️ Not every cartoon names him, so the slot cannot supply the name. Of the
+# 107: 102 titles carry '정운경', one carries it spaced as '정 운 경' (063-03),
+# three name nobody at all ('[서울만평]' alone, twice, and one carrying only a
+# caption), and 049-31 reads '[주사 새서울씨]-정겨운', which this cannot confirm
+# is a person's name rather than a word. Hence an allow-list of names actually
+# verified in the source: anything else gets NO credit line. Printing the
+# slot's usual artist over a drawing the archives left unsigned would be an
+# attribution we invented, which is the one thing a credit must never be.
+GAZETTE_ARTISTS = ('정운경',)
+
+
+def gazette_artist(item):
+    """The artist to credit, or '' where the record's title names none.
+
+    Whitespace is squashed before matching, because one title spells the name
+    out letter by letter as '정 운 경'.
+    """
+    squashed = re.sub(r'\s+', '', item.get('title') or '')
+    for name in GAZETTE_ARTISTS:
+        if name in squashed:
+            return name
+    return ''
+
+
+def gazette_has_words(item):
+    """Whether a gazette record carries any text of its own to translate.
+
+    ⚠️ Eight of the 107 cartoons and strips are WORDLESS: title and
+    transcription together hold nothing but the running tag and the artist's
+    name. Asked to translate that, the model answered
+    {"gist": "Artist name"} and then explained itself in prose after the
+    closing fence, which was invalid JSON and took the whole run down
+    (22 August 2026). They are still perfectly good drawings, so they are still
+    posted — under the slot's name alone, with no invented gist.
+    """
+    blob = f"{item.get('title', '')} {item.get('text', '')}"
+    blob = blob.replace(f"[{item.get('tag', '')}]", ' ')
+    blob = re.sub(r'\s+', '', blob)          # the spaced-out '정 운 경' spelling
+    for name in GAZETTE_ARTISTS:
+        blob = blob.replace(name, '')
+    return bool(re.sub(r'[\-\u2013\u2014\u00b7,./<>()\[\]]+', '', blob))
+
+
 def gazette_body(item):
     """A gazette item's transcription with the leading title line removed.
 
@@ -463,6 +512,10 @@ def translate_gazette(item):
     """
     slot = GAZETTE_SLOTS[item['tag']]
     label = slot['label']
+    if not gazette_has_words(item):
+        # A wordless drawing. The slot's name is the whole honest caption.
+        print('  (no text to translate — posting under the slot name alone)')
+        return {'title': label, 'description': '', 'date': ''}
     if slot['kind'] == 'notice':
         prompt = _gazette_notice_prompt(item, label)
     else:
@@ -614,6 +667,13 @@ def _claude_json(prompt):
         try:
             return json.loads(text)
         except json.JSONDecodeError:
+            # The model sometimes closes the fence and then explains itself,
+            # which is trailing prose rather than malformed JSON. Observed
+            # 22 August 2026 on a wordless cartoon, where it took the run down.
+            # Recover the first complete object rather than spending a retry.
+            obj = _first_json_object(text)
+            if obj is not None:
+                return obj
             if attempt == 0:
                 print(f'Warning: malformed JSON from claude -p (attempt 1), retrying...')
                 attempt += 1
@@ -637,6 +697,39 @@ def capitalize_after_colon(text):
     routine — its titles are built as "<strip name>: <gist>".
     """
     return _AFTER_COLON.sub(lambda m: m.group(1) + m.group(2).upper(), text)
+
+
+def _first_json_object(text):
+    """The first balanced {...} in text, parsed, or None.
+
+    Brace-matched rather than regex-matched, and string-aware, so a brace
+    inside a quoted value cannot end the object early.
+    """
+    start = text.find('{')
+    if start < 0:
+        return None
+    depth, in_str, esc = 0, False, False
+    for i, ch in enumerate(text[start:], start):
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == '\\':
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch == '{':
+            depth += 1
+        elif ch == '}':
+            depth -= 1
+            if depth == 0:
+                try:
+                    return json.loads(text[start:i + 1])
+                except json.JSONDecodeError:
+                    return None
+    return None
 
 
 def promote_single_quotes(text):
@@ -1002,6 +1095,11 @@ def format_post(title_en, desc_en, title_ko, header, item, source):
     The tag set comes from the source: a drawing does not get #photography.
     """
     tags = source['tags']
+    # An artist line above the source credit, for a signed drawing. Counted in
+    # the overhead below like everything else, so it comes out of the
+    # description's budget rather than pushing the post over the limit.
+    artist = gazette_artist(item) if source.get('credit_artist') else ''
+    artist_line = f'✏️ {artist}\n' if artist else ''
     # Calculate fixed overhead: everything except desc_en
     # tags as plain text for length check: '#Seoul #Korea #History #서울 #역사'
     tags_plain = ' '.join(f'#{t}' for t, _ in tags)
@@ -1012,6 +1110,7 @@ def format_post(title_en, desc_en, title_ko, header, item, source):
         f'{{DESC}}\n\n'
         f'{title_ko}\n\n'
         f'{tags_plain}\n'
+        f'{artist_line}'
         f'{source["link_label"]}'
     )
     overhead = len(body) - len('{DESC}')
@@ -1037,6 +1136,8 @@ def format_post(title_en, desc_en, title_ko, header, item, source):
             tb.text(' ')
         tb.tag(f'#{tag}', tag_label)
     tb.text('\n')
+    if artist_line:
+        tb.text(artist_line)
     tb.link(source['link_label'], item_link(item, source))
 
     return tb
