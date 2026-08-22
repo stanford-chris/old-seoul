@@ -10,9 +10,9 @@ Three pools (see SOURCES):
   - seoul_dryplate.json  National Museum of Korea's 조선총독부박물관 glass plates,
                          1909-1945, mostly undated and title-only. 공공누리
                          제1유형, so the museum credit is mandatory.
-  - seoul_gazette.json   서울시보, the 1982-83 city gazette. Only its 107
-                         cartoons and comic strips are posted (see
-                         GAZETTE_STRIPS), and an item is a region of a page
+  - seoul_gazette.json   서울시보, the 1982-83 city gazette. Only its 169
+                         cartoons, comic strips and advertisements are posted
+                         (see GAZETTE_SLOTS), and an item is a region of a page
                          rather than a file, so its picture is cropped out of
                          the page scan on the way through.
 
@@ -60,20 +60,31 @@ PHOTO_TAGS = [('photography', 'photography'), ('seoul', 'seoul'),
               ('서울', '서울'), ('역사', '역사')]
 DRAWING_TAGS = [t for t in PHOTO_TAGS if t[0] != 'photography']
 
-# The gazette's two recurring cartoon slots, and the English name each is
-# published under. Both are by 정운경, whose name is therefore NOT in the
-# English title: it would repeat on all 107 posts. It reaches the reader in the
-# Korean line, which is the source's own title, verbatim as every pool's is.
+# The gazette slots this bot posts, the English name each is published under,
+# and which of the two shapes it takes.
+#
+# The cartoons are both by 정운경, whose name is therefore NOT in the English
+# title: it would repeat on all 107 posts. It reaches the reader in the Korean
+# line, which is the source's own title, verbatim as every pool's is.
+#
+# `kind` decides how the Korean is turned into English, and the two are
+# genuinely different jobs:
+#   strip  — the transcription IS the item's words (a caption, or the speech
+#            bubbles), short enough to render whole. Translation.
+#   notice — the transcription is the body of a municipal advertisement, median
+#            593 characters of it. A hundred characters of English is a
+#            SUMMARY, which is where a model invents, so its prompt is tighter.
 #
 # ⚠️ This mapping IS the pool filter. The gazette holds 2,573 articles and the
-# other 2,466 are newspaper text, whose crop is a picture of Korean type rather
-# than a picture — a different bot, not a different item. Adding a key here
-# starts posting that slot, so add one only with the crop checked: 28% of
-# gazette boxes contain part of a neighbouring article, though all 107 of these
+# remaining 2,404 are newspaper text, whose crop is a picture of Korean type
+# rather than a picture — a different bot, not a different item. Adding a key
+# here starts posting that slot, so add one only with the crop checked: 28% of
+# gazette boxes contain part of a neighbouring article, though all 169 of these
 # are clean.
-GAZETTE_STRIPS = {
-    '서울만평': 'Cartoon',
-    '주사 새서울씨': 'Clerk Mr. New Seoul',
+GAZETTE_SLOTS = {
+    '서울만평': {'label': 'Cartoon', 'kind': 'strip'},
+    '주사 새서울씨': {'label': 'Clerk Mr. New Seoul', 'kind': 'strip'},
+    '광고': {'label': 'Advertisement', 'kind': 'notice'},
 }
 
 # The three pools. They are posted from a single combined pool, so each
@@ -116,9 +127,11 @@ SOURCES = {
         # needs three query parameters rather than one id. See item_link.
         'item_url': None,
         'alt_tail': 'Seoul Metropolitan Archives',
-        # Both a cartoon and a comic strip are honestly 'a city gazette'.
-        # Naming the medium is image_alt's job: its prompt already asks for
-        # an opener like "Pen-and-ink illustration" where it is not obvious.
+        # A cartoon, a strip and an advertisement are all honestly 'a city
+        # gazette'. Naming the medium is image_alt's job: its prompt already
+        # asks for an opener like "Pen-and-ink illustration", and on a notice
+        # it returns "Newspaper advertisement in Korean, dense vertical columns
+        # of text under a bold headline" — checked, 22 August 2026.
         'alt_object': 'city gazette',
         'alt_credit': '서울기록원 서울시보',
         # Every record carries an exact publication date, so the header is the
@@ -128,14 +141,14 @@ SOURCES = {
         # An item is a region of a page: the picture has to be cut out of the
         # page scan after it is fetched. See crop_article.
         'crop': True,
-        # Cartoons and strips only, and only where the archives gave the
-        # article a box to cut to.
-        'select': lambda it: it.get('tag') in GAZETTE_STRIPS and bool(it.get('box')),
-        # Target share of the feed. Without it this pool is 107 items against
-        # 10,956, so a cartoon would surface about once in 103 posts — every
-        # seven weeks at two a day, and fifteen years to get through them.
-        # At 1 in 10 it is a cartoon every five days and the set lasts about
-        # eighteen months. See draw_weights.
+        # The slots above, and only where the archives gave the article a box
+        # to cut to. See gazette_postable for the extra condition a notice has
+        # to meet.
+        'select': lambda it: gazette_postable(it),
+        # Target share of the feed. Without it this pool is 169 items against
+        # 10,956, so one would surface about once in 65 posts — every month at
+        # two a day. At 1 in 10 it is one every five days and the set lasts
+        # about two and a half years. See draw_weights.
         'share': 0.10,
     },
 }
@@ -295,6 +308,40 @@ def item_images(item):
     return [item['image_url']] if item.get('image_url') else []
 
 
+def gazette_body(item):
+    """A gazette item's transcription with the leading title line removed.
+
+    The archives repeat the article's own headline at the head of the
+    transcription on most records, so the body is what is left after it. This
+    is what a notice has to have some of to be worth posting.
+    """
+    text = (item.get('text') or '').strip()
+    title = (item.get('title') or '').strip()
+    if title and text.startswith(title):
+        text = text[len(title):].strip()
+    return text
+
+
+def gazette_postable(item):
+    """Whether a gazette record is one this bot posts.
+
+    ⚠️ A notice needs a transcription beyond its headline, and that condition
+    is load-bearing. Five of the 67 advertisements have none: two instalments
+    of a 순화대상 행정용어 glossary and three lists of office codes. Their whole
+    content is the table printed in the image, so there is nothing to translate
+    and the image is a wall of unreadable type — the post would carry no
+    information at all. A strip has no such rule: for a cartoon the caption
+    alone IS the content, and several transcribe to nothing but the artist's
+    name.
+    """
+    slot = GAZETTE_SLOTS.get(item.get('tag'))
+    if not slot or not item.get('box'):
+        return False
+    if slot['kind'] == 'notice' and not gazette_body(item):
+        return False
+    return True
+
+
 def item_date_en(item):
     """'20 January 1982' from a gazette record's own date, or '' if it has none.
 
@@ -400,23 +447,61 @@ def translate_title_only(title_ko):
 
 
 def translate_gazette(item):
-    """Translate one gazette cartoon or comic strip.
+    """Translate one gazette item: a cartoon, a comic strip or an advertisement.
 
-    ⚠️ THE MODEL CANNOT SEE THE DRAWING, and this prompt must never let it
-    pretend otherwise. What it gets is the archives' transcription: a caption
-    for a cartoon, the speech bubbles for a strip. Everything it writes has to
-    come out of that text. The temptation is real and specific — a caption
-    reading "지하철 급진전" invites "Chung Woon-kyung draws the diggings as a
-    star-shaped crater", which is a perfectly good sentence about a picture
-    nobody in this function has looked at. The drawing does get described, by
-    image_alt.describe(), which is shown the actual pixels.
+    ⚠️ THE MODEL CANNOT SEE THE PAGE, and neither prompt may let it pretend
+    otherwise. What it gets is the archives' transcription. Everything it
+    writes has to come out of that text. The temptation is real and specific —
+    a caption reading "지하철 급진전" invites "Chung Woon-kyung draws the diggings
+    as a star-shaped crater", which is a perfectly good sentence about a
+    picture nobody in this function has looked at. The artefact does get
+    described, by image_alt.describe(), which is shown the actual pixels.
 
-    The strip's English name is prefixed in code, not asked for, so all 107
-    posts name the slot identically. The model supplies only what follows the
+    The slot's English name is prefixed in code, not asked for, so every post
+    in a slot names it identically. The model supplies only what follows the
     colon.
     """
-    label = GAZETTE_STRIPS[item['tag']]
-    prompt = (
+    slot = GAZETTE_SLOTS[item['tag']]
+    label = slot['label']
+    if slot['kind'] == 'notice':
+        prompt = _gazette_notice_prompt(item, label)
+    else:
+        prompt = _gazette_strip_prompt(item, label)
+
+    out = _claude_json(prompt)
+    gist = (out.get('gist') or '').strip()
+    # The label is ours, so a missing gist degrades to the slot's name alone
+    # rather than to a stray colon.
+    return {
+        'title': f'{label}: {gist}' if gist else label,
+        'description': (out.get('description') or '').strip(),
+        # Never asked for: item_date_en already knows the exact day.
+        'date': '',
+    }
+
+
+_GAZETTE_HOUSE_RULES = (
+    # Left to itself the model mixes the two within a single slot: on the first
+    # run of the notice prompt, two of four gists came back Title Case and two
+    # sentence case. The gist sits after a colon, where house style capitalises
+    # the first word and nothing else.
+    '- Sentence case, NOT Title Case: capitalise the first word and proper '
+    'nouns only. "Family motto calligraphy contest", not "Family Motto '
+    'Calligraphy Contest"\n'
+    '- UK English spelling: modernisation not modernization, harbour not '
+    'harbor, centre not center\n'
+    '- Write "percent" as one word, never "per cent"\n'
+    '- Quote with double quotation marks, never single ones\n'
+    '- Use British date format for any dates (e.g. 9 June 1972)\n'
+    '- Write quantities of one thousand or more with thousands separators '
+    '(e.g. 35,000 trees), but never put a separator in a year\n'
+)
+
+
+def _gazette_strip_prompt(item, label):
+    """A cartoon or comic strip: the transcription is short enough to render
+    whole, so this is translation and the description says what the lines say."""
+    return (
         f'This is one item from 서울시보, the Seoul city government newspaper of '
         f'1982-83. It is a {"political cartoon" if item["tag"] == "서울만평" else "four-panel comic strip"} '
         f'published under the running title "{item["tag"]}" ({label}).\n\n'
@@ -438,25 +523,50 @@ def translate_gazette(item):
         f'other framing of that kind. It must add something the gist does not '
         f'already carry; if it cannot, return an empty description rather than '
         f'padding one out.\n'
-        f'- UK English spelling: modernisation not modernization, harbour not '
-        f'harbor, centre not center\n'
-        f'- Write "percent" as one word, never "per cent"\n'
-        f'- Quote with double quotation marks, never single ones\n'
-        f'- Use British date format for any dates (e.g. 9 June 1972)\n'
-        f'- Write quantities of one thousand or more with thousands separators '
-        f'(e.g. 35,000 trees), but never put a separator in a year\n'
+        + _GAZETTE_HOUSE_RULES +
         f'- Return JSON only: {{"gist": "...", "description": "..."}}'
     )
-    out = _claude_json(prompt)
-    gist = (out.get('gist') or '').strip()
-    # The label is ours, so a missing gist degrades to the slot's name alone
-    # rather than to a stray colon.
-    return {
-        'title': f'{label}: {gist}' if gist else label,
-        'description': (out.get('description') or '').strip(),
-        # Never asked for: item_date_en already knows the exact day.
-        'date': '',
-    }
+
+
+def _gazette_notice_prompt(item, label):
+    """An advertisement: a municipal notice whose transcription runs to a median
+    593 characters, so the description is a SUMMARY.
+
+    ⚠️ That is a different risk from the strips and the reason this prompt
+    exists separately. Rendering a short caption is translation and stays
+    honest almost by construction; compressing a page of conditions into one
+    sentence is where a model rounds "4급 이상과 여직원 1인 이상 필히 참가" into
+    something tidier and wrong. Hence: concrete particulars only, and an
+    explicit instruction to drop what will not fit rather than generalise it.
+    """
+    return (
+        f'This is an advertisement from 서울시보, the Seoul city government '
+        f'newspaper of 1982-83. These are municipal notices: recruitment for '
+        f'training courses and night schools, public competitions, exam and '
+        f'tender announcements, service information for city staff and '
+        f'residents.\n\n'
+        f'Below is the archive\'s transcription of it. You CANNOT see the page.\n\n'
+        f'Headline (Korean): {item["title"]}\n'
+        f'Body (Korean):\n{gazette_body(item)[:2000]}\n\n'
+        f'Rules:\n'
+        f'- Write ONLY from the transcription. Never describe the layout, the '
+        f'typography or the illustrations: you have not seen the page.\n'
+        f'- gist: a short English phrase, max 45 characters, naming what is '
+        f'being announced. It follows a colon after "{label}", so do not repeat '
+        f'that word. Start it with a capital letter.\n'
+        f'- description: one or two sentences, max 100 characters, giving the '
+        f'CONCRETE PARTICULARS a reader would want: who it is open to, when and '
+        f'where, prize or fee amounts, the striking condition. Prefer specifics '
+        f'over summary — "3,000,000 won for the winner" beats "cash prizes '
+        f'offered".\n'
+        f'- If a detail will not fit, LEAVE IT OUT. Never generalise a specific '
+        f'condition into a vaguer one that covers it: a wrong summary of an '
+        f'official notice is worse than a short one.\n'
+        f'- Give sums in won as the notice gives them. Do not convert '
+        f'currencies or estimate modern values.\n'
+        + _GAZETTE_HOUSE_RULES +
+        f'- Return JSON only: {{"gist": "...", "description": "..."}}'
+    )
 
 
 def _claude_json(prompt):
@@ -907,7 +1017,15 @@ def format_post(title_en, desc_en, title_ko, header, item, source):
     overhead = len(body) - len('{DESC}')
     max_desc = MAX_POST_CHARS - overhead
     if len(desc_en) > max_desc:
-        desc_en = desc_en[:max_desc - 1] + '…'
+        # Trim at a word boundary. Mid-word is what this used to do, and on a
+        # gazette advertisement it produced "Apply by 15 April 1982 to Parks
+        # and Greener…", which reads as broken rather than as trimmed. The
+        # 60% floor stops a long final word collapsing the line to nothing.
+        cut = desc_en[:max_desc - 1]
+        space = cut.rfind(' ')
+        if space > max_desc * 0.6:
+            cut = cut[:space]
+        desc_en = cut.rstrip(' ,;:') + '…'
 
     topic_emoji = pick_seoul_emoji(title_en, desc_en, title_ko)
     en_block = (f'{topic_emoji} {title_en}\n{desc_en}' if desc_en

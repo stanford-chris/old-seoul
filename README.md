@@ -19,13 +19,12 @@ pool it came from.
 | --- | --- | --- | --- |
 | `seoul_archive.json` | [Seoul Metropolitan Archives](https://archives.seoul.go.kr) | 1950s-90s municipal photography | ~9,500 |
 | `seoul_dryplate.json` | [National Museum of Korea](https://www.museum.go.kr/dryplate/main.do), Government-General glass plates | 1909-1945 | 1,452 |
-| `seoul_gazette.json` | [Seoul Metropolitan Archives](https://archives.seoul.go.kr/newspaper), 서울시보 cartoons | 1982-83 | 107 of 2,573 |
+| `seoul_gazette.json` | [Seoul Metropolitan Archives](https://archives.seoul.go.kr/newspaper), 서울시보 cartoons and adverts | 1982-83 | 169 of 2,573 |
 
 ⚠️ **The gazette's share of the feed is set, not left to its size.** Unweighted,
-107 cartoons against 10,956 photographs surfaces one about every seven weeks and
-takes fifteen years to get through them. `SOURCES['gazette']['share'] = 0.10`
-makes it 1 post in 10: a cartoon every five days, and about eighteen months of
-them. The photo pools keep their relative standing exactly, splitting the other
+169 items against 10,956 photographs surfaces one about every month.
+`SOURCES['gazette']['share'] = 0.10` makes it 1 post in 10: one every five days,
+and about two and a half years of them. The photo pools keep their relative standing exactly, splitting the other
 90% in proportion to their own sizes, which is what the unweighted draw already
 did. See `draw_weights`, which also covers the gazette being absent, being the
 only source (`--source gazette`), and shares misconfigured past 1.
@@ -42,9 +41,10 @@ the header while the alt text still stated it, so the post contradicted its own
 description.
 
 A third pool, `seoul_gazette.json`, holds 2,573 articles of the 1982-83 city
-gazette. **Only its 107 cartoons and comic strips are posted** — `서울만평` and
-`주사 새서울씨`, both by 정운경 — because an item there is a region of a page and
-the other 2,466 crop to a picture of Korean newsprint rather than a picture.
+gazette. **Only its 169 cartoons, comic strips and advertisements are posted** —
+`서울만평` and `주사 새서울씨`, both by 정운경, plus `광고` — because an item there is a
+region of a page and the other 2,404 crop to a picture of Korean newsprint
+rather than a picture.
 Those posts lead with the exact publication date, drop `#photography` (a
 pen-and-ink cartoon is not a photograph) and have their picture cut out of the
 page scan on the way through. See sections 1c and 2.
@@ -106,10 +106,16 @@ articles are not.** An item here is a region of a page rather than a file:
   real prose to translate rather than a title alone. Two exceptions to expect:
   the cartoons transcribe to the artist's name and the org charts to a literal
   `X`, so for those the title is the content.
-- The 54 `서울만평` editorial cartoons and 53 `주사 새서울씨` four-panel strips,
-  both by 정운경, are what the bot posts: self-contained pictures, all 107 of
-  which crop clean. `GAZETTE_STRIPS` in `seoul_post.py` is both the roster and
-  the filter — adding a key there starts posting that slot.
+- The bot posts three slots, all of which crop clean: 54 `서울만평` editorial
+  cartoons, 53 `주사 새서울씨` four-panel strips (both by 정운경) and 62 `광고`
+  advertisements. `GAZETTE_SLOTS` in `seoul_post.py` is both the roster and the
+  filter — adding a key there starts posting that slot.
+- ⚠️ **Five of the 67 advertisements are excluded** by `gazette_postable`,
+  which requires a notice to have a transcription beyond its headline. Those
+  five are two instalments of a 순화대상 행정용어 glossary and three lists of
+  office codes: their whole content is the table printed in the image, so there
+  is nothing to translate and the crop is a wall of unreadable type. A cartoon
+  has no such rule, because for a cartoon the caption alone is the content.
 
 Two requests per unit of work, and both are needed: the listing gives 발행번호,
 date and **title**, the viewer gives the page image, its dimensions and every
@@ -163,11 +169,25 @@ Three things vary by source rather than globally:
 - **The date.** A gazette record states its exact publication day, so the
   header is that day and the model is never asked to find one.
 
-⚠️ **`translate_gazette` must never describe the drawing.** It is shown the
-archives' transcription — a caption, or a strip's speech bubbles — and nothing
-else. A caption reading `지하철 급진전` invites "drawn as a star-shaped crater",
-which is a fine sentence about a picture the model has not seen. The drawing is
-described by `image_alt.describe()`, which is shown the actual pixels.
+⚠️ **`translate_gazette` must never describe the artefact.** It is shown the
+archives' transcription and nothing else. A caption reading `지하철 급진전` invites
+"drawn as a star-shaped crater", which is a fine sentence about a picture the
+model has not seen. The artefact is described by `image_alt.describe()`, which
+is shown the actual pixels — and needs no special case for a notice, returning
+"Newspaper advertisement in Korean, dense vertical columns of text under a bold
+headline", which complements the caption instead of repeating it.
+
+It has **two prompts, because they are different jobs**. A strip's
+transcription IS its words and is short enough to render whole: translation. An
+advertisement's runs to a median 593 characters, so a hundred characters of
+English is a *summary*, which is where a model rounds a specific condition into
+a tidier wrong one. `_gazette_notice_prompt` therefore asks for concrete
+particulars and says to drop what will not fit rather than generalise it.
+
+⚠️ **The notice description gets 100 characters, not the larger budget it looks
+like it should have.** Measured across the 62 adverts: 140 characters fits 6% to
+29% of them and 100 fits 96%, because a gazette headline is far longer than a
+photo caption. `format_post` trims at a word boundary for the rest.
 
 `capitalize_after_colon` capitalises the first word after a colon, so a title
 built as `<strip name>: <gist>` reads "Cartoon: The subway races ahead". House
