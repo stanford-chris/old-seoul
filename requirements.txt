@@ -4,6 +4,11 @@ atproto>=0.0.55
 # seoul_harvest.py — parsing archive item pages
 beautifulsoup4>=4.12
 
+# seoul_post.py — cropping a gazette article out of its page scan. Imported
+# lazily inside crop_article, so a missing Pillow costs the gazette its posts
+# and leaves the two photo pools running rather than taking the bot down.
+Pillow>=10.0
+
 # Note: seoul_post.py also shells out to the `claude` CLI to translate the
 # Korean captions (see README). That is a separate command-line tool, not a
 # pip package, and must be installed and authenticated separately.

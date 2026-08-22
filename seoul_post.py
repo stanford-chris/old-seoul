@@ -4,12 +4,17 @@ Post one historical Seoul photo to Bluesky (@oldhanyang.bsky.social).
 Picks a random unposted item from the combined photo pools, translates with
 Claude, posts with the image, and marks it as posted in its own pool.
 
-Two pools (see SOURCES):
+Three pools (see SOURCES):
   - seoul_archive.json   Seoul Metropolitan Archives, 1950s-90s municipal
                          photography, dated, with Korean descriptions.
   - seoul_dryplate.json  National Museum of Korea's 조선총독부박물관 glass plates,
                          1909-1945, mostly undated and title-only. 공공누리
                          제1유형, so the museum credit is mandatory.
+  - seoul_gazette.json   서울시보, the 1982-83 city gazette. Only its 107
+                         cartoons and comic strips are posted (see
+                         GAZETTE_STRIPS), and an item is a region of a page
+                         rather than a file, so its picture is cropped out of
+                         the page scan on the way through.
 
 Requires:
     security add-generic-password -a "oldhanyang.bsky.social" -s "seoulbot-bluesky" -w
@@ -17,7 +22,7 @@ Requires:
 Usage:
     python3 seoul_post.py                      # post one item
     python3 seoul_post.py --dry-run            # translate and format, no post
-    python3 seoul_post.py --source dryplate    # restrict the pool to one source
+    python3 seoul_post.py --source gazette     # restrict the pool to one source
 """
 
 import json
@@ -38,6 +43,7 @@ import net_guard
 
 ARCHIVE = Path(__file__).parent / 'seoul_archive.json'
 DRYPLATE = Path(__file__).parent / 'seoul_dryplate.json'
+GAZETTE = Path(__file__).parent / 'seoul_gazette.json'
 # One JSONL line per posted item, recording the alt text that shipped and
 # whether it was generated or fell back. Written only on a real post, and
 # best-effort: see alt_log.
@@ -45,7 +51,32 @@ ALT_LOG = Path(__file__).parent / 'alt_history.jsonl'
 HANDLE = 'oldhanyang.bsky.social'
 KEYCHAIN_SERVICE = 'seoulbot-bluesky'
 
-# The two photo pools. They are posted from a single combined pool, so each
+# Hashtags, per source rather than global since 22 August 2026. #photography
+# belongs on a photograph; the gazette posts a pen-and-ink cartoon or a comic
+# strip, so it takes the same set without it (user's instruction: "post
+# #photography with photography posts, but remove elsewhere").
+PHOTO_TAGS = [('photography', 'photography'), ('seoul', 'seoul'),
+              ('korea', 'korea'), ('history', 'history'),
+              ('서울', '서울'), ('역사', '역사')]
+DRAWING_TAGS = [t for t in PHOTO_TAGS if t[0] != 'photography']
+
+# The gazette's two recurring cartoon slots, and the English name each is
+# published under. Both are by 정운경, whose name is therefore NOT in the
+# English title: it would repeat on all 107 posts. It reaches the reader in the
+# Korean line, which is the source's own title, verbatim as every pool's is.
+#
+# ⚠️ This mapping IS the pool filter. The gazette holds 2,573 articles and the
+# other 2,466 are newspaper text, whose crop is a picture of Korean type rather
+# than a picture — a different bot, not a different item. Adding a key here
+# starts posting that slot, so add one only with the crop checked: 28% of
+# gazette boxes contain part of a neighbouring article, though all 107 of these
+# are clean.
+GAZETTE_STRIPS = {
+    '서울만평': 'Cartoon',
+    '주사 새서울씨': 'Clerk Mr. New Seoul',
+}
+
+# The three pools. They are posted from a single combined pool, so each
 # source's share of the feed is just its share of the unposted items.
 #
 # `dated`: the Seoul Metropolitan Archives records carry a usable year, so their
@@ -63,6 +94,7 @@ SOURCES = {
         'alt_tail': 'Seoul Metropolitan Archives',
         'alt_credit': '서울기록원',
         'dated': True,
+        'tags': PHOTO_TAGS,
     },
     'dryplate': {
         'path': DRYPLATE,
@@ -75,6 +107,30 @@ SOURCES = {
         'alt_period': 'colonial-era',
         'alt_credit': '국립중앙박물관 유리건판',
         'dated': False,
+        'tags': PHOTO_TAGS,
+    },
+    'gazette': {
+        'path': GAZETTE,
+        'link_label': '🗃️ Seoul Metropolitan Archives',
+        # No format string: a gazette record carries its own detail_url, which
+        # needs three query parameters rather than one id. See item_link.
+        'item_url': None,
+        'alt_tail': 'Seoul Metropolitan Archives',
+        # Both a cartoon and a comic strip are honestly 'a city gazette'.
+        # Naming the medium is image_alt's job: its prompt already asks for
+        # an opener like "Pen-and-ink illustration" where it is not obvious.
+        'alt_object': 'city gazette',
+        'alt_credit': '서울기록원 서울시보',
+        # Every record carries an exact publication date, so the header is the
+        # day itself and the model is never asked to find one.
+        'dated': True,
+        'tags': DRAWING_TAGS,
+        # An item is a region of a page: the picture has to be cut out of the
+        # page scan after it is fetched. See crop_article.
+        'crop': True,
+        # Cartoons and strips only, and only where the archives gave the
+        # article a box to cut to.
+        'select': lambda it: it.get('tag') in GAZETTE_STRIPS and bool(it.get('box')),
     },
 }
 
@@ -98,7 +154,7 @@ def _tail_n(argv):
 def _source_filter(argv):
     """Key for `--source <name>` (restrict the pool to one source), or None.
 
-    A testing and backfill aid: without it the pool is both sources combined.
+    A testing and backfill aid: without it the pool is all sources combined.
     """
     if '--source' not in argv:
         return None
@@ -208,8 +264,12 @@ def item_desc(item):
     title, a subject path and a place, and nothing prose-like. That empty string
     is load-bearing — translate() must not be asked to write a description from
     nothing, or it invents one.
+
+    A gazette record's equivalent is `text`, the archives' own transcription of
+    the article. For a cartoon that is its caption; for a strip, its speech
+    bubbles.
     """
-    return item.get('description') or ''
+    return item.get('description') or item.get('text') or ''
 
 
 def item_year(item):
@@ -217,10 +277,40 @@ def item_year(item):
 
 
 def item_images(item):
-    """Image URLs as a list. The glass plates are one plate, one image."""
+    """Image URLs as a list. The glass plates are one plate, one image.
+
+    A gazette record points at the whole page scan, which is not what gets
+    posted: crop_article cuts the article out of it after the fetch.
+    """
     if item.get('images'):
         return item['images']
+    if item.get('page_image'):
+        return [item['page_image']]
     return [item['image_url']] if item.get('image_url') else []
+
+
+def item_date_en(item):
+    """'20 January 1982' from a gazette record's own date, or '' if it has none.
+
+    Only the gazette knows the exact day for certain, and it knows it for every
+    record, so that day is taken from the data rather than asked of the model.
+    The photo pools keep the existing route: translate() reports a precise date
+    only where the Korean caption states one.
+    """
+    raw = (item.get('date') or '').strip()
+    if not re.fullmatch(r'\d{4}-\d{2}-\d{2}', raw):
+        return ''
+    d = datetime.strptime(raw, '%Y-%m-%d')
+    # No leading zero on the day: UK style is "1 February", not "01 February".
+    return f'{d.day} {d.strftime("%B %Y")}'
+
+
+def item_link(item, source):
+    """Where the credit links. A record that carries its own detail_url wins:
+    a gazette article is addressed by three query parameters, not by an id."""
+    if item.get('detail_url'):
+        return item['detail_url']
+    return source['item_url'].format(id=item_id(item))
 
 
 # Seoul's 18 districts as they appear in the glass-plate region field, with the
@@ -300,6 +390,66 @@ def translate_title_only(title_ko):
     return {'title': out.get('title', ''), 'description': '', 'date': ''}
 
 
+def translate_gazette(item):
+    """Translate one gazette cartoon or comic strip.
+
+    ⚠️ THE MODEL CANNOT SEE THE DRAWING, and this prompt must never let it
+    pretend otherwise. What it gets is the archives' transcription: a caption
+    for a cartoon, the speech bubbles for a strip. Everything it writes has to
+    come out of that text. The temptation is real and specific — a caption
+    reading "지하철 급진전" invites "Chung Woon-kyung draws the diggings as a
+    star-shaped crater", which is a perfectly good sentence about a picture
+    nobody in this function has looked at. The drawing does get described, by
+    image_alt.describe(), which is shown the actual pixels.
+
+    The strip's English name is prefixed in code, not asked for, so all 107
+    posts name the slot identically. The model supplies only what follows the
+    colon.
+    """
+    label = GAZETTE_STRIPS[item['tag']]
+    prompt = (
+        f'This is one item from 서울시보, the Seoul city government newspaper of '
+        f'1982-83. It is a {"political cartoon" if item["tag"] == "서울만평" else "four-panel comic strip"} '
+        f'published under the running title "{item["tag"]}" ({label}).\n\n'
+        f'Below is the archive\'s transcription of the text printed in it — '
+        f'the caption, and for a strip the speech bubbles. You CANNOT see the '
+        f'drawing itself.\n\n'
+        f'Transcription (Korean):\n{item_desc(item)}\n\n'
+        f'Rules:\n'
+        f'- Write ONLY from the transcription. Never describe the drawing, the '
+        f'characters, the composition or the artist\'s style: you have not seen '
+        f'them, and inventing them is the one thing this must not do.\n'
+        f'- gist: a short English phrase, max 45 characters, giving what this '
+        f'one is about. It follows a colon after "{label}", so do not repeat '
+        f'that name. Start it with a capital letter.\n'
+        f'- description: one sentence, max 100 characters, rendering what the '
+        f'transcribed lines actually SAY — for a strip, what happens in it and '
+        f'what the characters tell each other. Not a summary of the topic: '
+        f'never open with "Discussion of", "A cartoon about", "Depicts" or any '
+        f'other framing of that kind. It must add something the gist does not '
+        f'already carry; if it cannot, return an empty description rather than '
+        f'padding one out.\n'
+        f'- UK English spelling: modernisation not modernization, harbour not '
+        f'harbor, centre not center\n'
+        f'- Write "percent" as one word, never "per cent"\n'
+        f'- Quote with double quotation marks, never single ones\n'
+        f'- Use British date format for any dates (e.g. 9 June 1972)\n'
+        f'- Write quantities of one thousand or more with thousands separators '
+        f'(e.g. 35,000 trees), but never put a separator in a year\n'
+        f'- Return JSON only: {{"gist": "...", "description": "..."}}'
+    )
+    out = _claude_json(prompt)
+    gist = (out.get('gist') or '').strip()
+    # The label is ours, so a missing gist degrades to the slot's name alone
+    # rather than to a stray colon.
+    return {
+        'title': f'{label}: {gist}' if gist else label,
+        'description': (out.get('description') or '').strip(),
+        # Never asked for: item_date_en already knows the exact day.
+        'date': '',
+    }
+
+
 def _claude_json(prompt):
     """Run `claude -p` and parse a JSON object from its output, with one retry
     on a timeout or malformed JSON, and one wait-and-retry on a spent quota.
@@ -350,6 +500,24 @@ def _claude_json(prompt):
                 attempt += 1
                 continue
             raise RuntimeError(f'claude -p returned invalid JSON after 2 attempts: {repr(text[:200])}')
+
+
+# A colon followed by a space and a lowercase letter. Times (11:30) and ratios
+# have no space after the colon, so they are left alone.
+_AFTER_COLON = re.compile(r'(:[  ]+)([a-z])')
+
+
+def capitalize_after_colon(text):
+    """Capitalize the first word after a colon: "Cartoon: The subway races
+    ahead", not "Cartoon: the subway races ahead".
+
+    House style (user, 22 August 2026). Enforced here rather than left to the
+    prompt, for the reason promote_single_quotes exists: an instruction the
+    model follows most of the time still ships the exception. Applies to every
+    source, not just the gazette, though the gazette is where the shape is
+    routine — its titles are built as "<strip name>: <gist>".
+    """
+    return _AFTER_COLON.sub(lambda m: m.group(1) + m.group(2).upper(), text)
 
 
 def promote_single_quotes(text):
@@ -445,7 +613,8 @@ def group_thousands(text):
     return re.sub(r'\d{4,}', repl, text)
 
 
-TAGS = [('photography', 'photography'), ('seoul', 'seoul'), ('korea', 'korea'), ('history', 'history'), ('서울', '서울'), ('역사', '역사')]
+# Tags moved to PHOTO_TAGS / DRAWING_TAGS beside SOURCES on 22 August 2026 and
+# are now read per source: see source['tags'] in format_post.
 
 # Specific-subject topics, scanned first (most specific wins). General
 # government and ceremony are deliberately NOT in this list: they are last-resort
@@ -665,17 +834,20 @@ def post_header(item, source, date_en=''):
     return ', '.join(part for part in (item_district(item), when) if part)
 
 
-def format_post(title_en, desc_en, title_ko, header, item_id, source):
+def format_post(title_en, desc_en, title_ko, header, item, source):
     """Build a TextBuilder with proper hashtag facets, trimming if needed.
 
     An empty desc_en (dropped as a restatement, or never written because the
     source has no description) omits the description line rather than leaving a
     blank one. An empty header omits the header line and its blank line too.
     The Korean block is the title alone, so the header is not repeated.
+
+    The tag set comes from the source: a drawing does not get #photography.
     """
+    tags = source['tags']
     # Calculate fixed overhead: everything except desc_en
     # tags as plain text for length check: '#Seoul #Korea #History #서울 #역사'
-    tags_plain = ' '.join(f'#{t}' for t, _ in TAGS)
+    tags_plain = ' '.join(f'#{t}' for t, _ in tags)
     header_block = f'{header}\n\n' if header else ''
     body = (
         f'{header_block}'
@@ -695,12 +867,12 @@ def format_post(title_en, desc_en, title_ko, header, item_id, source):
                 else f'{topic_emoji} {title_en}')
     tb = client_utils.TextBuilder()
     tb.text(f'{header_block}{en_block}\n\n{title_ko}\n\n')
-    for i, (tag, tag_label) in enumerate(TAGS):
+    for i, (tag, tag_label) in enumerate(tags):
         if i > 0:
             tb.text(' ')
         tb.tag(f'#{tag}', tag_label)
     tb.text('\n')
-    tb.link(source['link_label'], source['item_url'].format(id=item_id))
+    tb.link(source['link_label'], item_link(item, source))
 
     return tb
 
@@ -764,12 +936,59 @@ def fetch_image(url):
     return result.stdout
 
 
+# Padding around a gazette article's box before it is cut out.
+#
+# ⚠️ Not cosmetic. The archives' boxes are tight and sometimes short: the box
+# for the 7 January 1982 strip stops inside its fourth panel, and about 20px
+# recovers it. Measured on the real pages, not guessed.
+CROP_PAD = 20
+
+
+def crop_article(data, item):
+    """Cut one gazette article out of its page scan.
+
+    A gazette item is a region of a page, so what is fetched is the whole
+    broadsheet and what gets posted is this rectangle of it.
+
+    ⚠️ The page's real size is checked against the size the archives declared,
+    because the coordinates are expressed in the declared one. A mismatch would
+    not fail: it would silently mis-crop every article on that page, which is
+    the kind of fault that ships for months. It raises instead, and the draw
+    loop moves on to another candidate.
+
+    Pillow is imported here rather than at module scope so that a broken or
+    missing install costs the gazette its posts and leaves the two photo pools
+    running. Going quiet is the failure this bot guards against everywhere else.
+    """
+    try:
+        from PIL import Image
+    except ImportError as exc:                       # pragma: no cover
+        raise ImageFetchError(f'Pillow needed to crop a gazette page: {exc}')
+
+    import io
+    page = Image.open(io.BytesIO(data))
+    declared = (item.get('page_width'), item.get('page_height'))
+    if page.size != declared:
+        raise ImageFetchError(
+            f'{item.get("page_image")}: page is {page.size} but the record '
+            f'says {declared}; coordinates would not line up')
+
+    left, top, right, bottom = item['box']
+    box = (max(0, left - CROP_PAD), max(0, top - CROP_PAD),
+           min(page.width, right + CROP_PAD), min(page.height, bottom + CROP_PAD))
+    out = io.BytesIO()
+    page.crop(box).convert('RGB').save(out, format='JPEG', quality=90)
+    print(f'  cropped to {box} ({out.tell()} bytes)')
+    return out.getvalue()
+
+
 def fetch_item_images(item):
     """Every picture for one item, or ImageFetchError if any one of them fails.
 
     All-or-nothing on purpose: posting the three frames of an event that did
     load would silently drop the fourth, and nothing in the post would say so.
     """
+    source = SOURCES[item['_source']]
     all_images = item_images(item)
     # For large sets, sample 4 frames spread across the whole set (kept in
     # original order) rather than the first 4, which in an event set are
@@ -782,7 +1001,10 @@ def fetch_item_images(item):
     images = []
     for url in image_urls:
         print(f'Fetching image: {url}')
-        images.append(fetch_image(url))
+        data = fetch_image(url)
+        if source.get('crop'):
+            data = crop_article(data, item)
+        images.append(data)
     return images
 
 
@@ -808,12 +1030,17 @@ def main():
         pools[key] = json.loads(source['path'].read_text())
         for it in pools[key]:
             it['_source'] = key
+        # `select` narrows a pool to the part of it this bot posts. Only the
+        # gazette has one, and it is what keeps 2,466 pages of newspaper text
+        # out of a feed of pictures.
+        select = source.get('select') or (lambda it: True)
         postable += [it for it in pools[key]
-                     if item_images(it) and not it.get('posted')]
+                     if select(it) and item_images(it) and not it.get('posted')]
 
     if not pools:
         sys.exit('Error: no photo pool found. Re-run the harvest scripts '
-                 '(seoul_harvest.py, ~2.5 hrs; seoul_dryplate_harvest.py, ~3 min).')
+                 '(seoul_harvest.py, ~2.5 hrs; seoul_dryplate_harvest.py, ~3 min; '
+                 'seoul_gazette_harvest.py, ~9 min).')
     if not postable:
         print('No postable items remaining in any pool.')
         sys.exit(0)
@@ -885,10 +1112,16 @@ def main():
 
     # Translate
     print('Translating...')
-    translation = translate(item['title'], item_desc(item), item_year(item))
-    title_en = group_thousands(educate_quotes(translation['title']))
-    desc_en = group_thousands(educate_quotes(translation['description']))
-    date_en = (translation.get('date') or '').strip()
+    if item['_source'] == 'gazette':
+        translation = translate_gazette(item)
+    else:
+        translation = translate(item['title'], item_desc(item), item_year(item))
+    title_en = capitalize_after_colon(
+        group_thousands(educate_quotes(translation['title'])))
+    desc_en = capitalize_after_colon(
+        group_thousands(educate_quotes(translation['description'])))
+    # A record that states its own exact day beats anything the model found.
+    date_en = item_date_en(item) or (translation.get('date') or '').strip()
     print(f'  EN title: {title_en}')
     print(f'  EN desc:  {desc_en}')
     if date_en:
@@ -900,7 +1133,7 @@ def main():
     # Format post
     header = post_header(item, source, date_en)
     post_text = format_post(title_en, desc_en, item['title'], header,
-                            item_id(item), source)
+                            item, source)
     post_plain = post_text.build_text()
     print(f'\nPost ({len(post_plain)} chars):\n{"-"*40}\n{post_plain}\n{"-"*40}')
 
