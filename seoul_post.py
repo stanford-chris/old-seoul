@@ -131,6 +131,12 @@ SOURCES = {
         # Cartoons and strips only, and only where the archives gave the
         # article a box to cut to.
         'select': lambda it: it.get('tag') in GAZETTE_STRIPS and bool(it.get('box')),
+        # Target share of the feed. Without it this pool is 107 items against
+        # 10,956, so a cartoon would surface about once in 103 posts — every
+        # seven weeks at two a day, and fifteen years to get through them.
+        # At 1 in 10 it is a cartoon every five days and the set lasts about
+        # eighteen months. See draw_weights.
+        'share': 0.10,
     },
 }
 
@@ -357,6 +363,8 @@ def translate(title_ko, description_ko, year):
         f'- Description translation: one clear sentence, max 100 characters\n'
         f'- Description must not restate or repeat the title — add new information (who, what is happening, context)\n'
         f'- Do not add interpretation or extra context\n'
+        f'- UK English spelling: modernisation not modernization, harbour not harbor, centre not center\n'
+        f'- Write "percent" as one word, never "per cent"\n'
         f'- Quote with double quotation marks, never single ones — a "comfort women" camp, not a \'comfort women\' camp\n'
         f'- Use British date format for any dates (e.g. 9 June 1972, not June 9 1972 or 06/09/1972)\n'
         f'- Write quantities of one thousand or more with thousands separators (e.g. 3,000 officials, 25,000 spectators), but never put a separator in a year (write 1972, not 1,972)\n'
@@ -381,6 +389,7 @@ def translate_title_only(title_ko):
         f'- These are catalogue entries for buildings, monuments and sites. '
         f'Keep Korean proper nouns in Revised Romanisation (Gyeongbokgung, '
         f'Donhwamun), and translate the architectural terms that follow them\n'
+        f'- UK English spelling: harbour not harbor, centre not center\n'
         f'- Quote with double quotation marks, never single ones\n'
         f'- Do not add interpretation, context or anything not in the Korean\n'
         f'- Return JSON only: {{"title": "..."}}'
@@ -719,6 +728,44 @@ def pick_seoul_emoji(title_en, desc_en, title_ko):
     return (_emoji_scan(SEOUL_EMOJIS, combined)
             or _emoji_scan(CATCHALL_EMOJIS, combined)
             or "📷")
+
+
+def draw_weights(candidates):
+    """Per-item draw weights, so a small pool can hold a set share of the feed.
+
+    An unweighted draw gives a source exactly its share of the unposted items,
+    which is right for the two photo pools and wrong for the gazette: 107
+    cartoons against 10,956 photographs is one cartoon every seven weeks, and
+    fifteen years to reach the end of them.
+
+    A source with a `share` gets that fraction of the draw however few items it
+    has left, split evenly among them. Everything else divides what remains in
+    proportion to its own size, which is what the unweighted draw already did,
+    so the photo pools keep their relative standing exactly.
+
+    Three states this has to survive, all of them ordinary:
+      - the shared source is absent (exhausted, or every item on cooldown), in
+        which case the rest simply split the whole draw;
+      - it is the ONLY source (`--source gazette`), where holding back 90% for
+        pools that are not here would be meaningless, so the draw goes uniform;
+      - shares summing past 1, which starves the rest rather than going
+        negative.
+    """
+    counts = {}
+    for it in candidates:
+        counts[it['_source']] = counts.get(it['_source'], 0) + 1
+
+    weight = {k: SOURCES[k]['share'] for k in counts if SOURCES[k].get('share')}
+    rest = [k for k in counts if k not in weight]
+    if rest:
+        remainder = max(0.0, 1.0 - sum(weight.values()))
+        rest_total = sum(counts[k] for k in rest)
+        for k in rest:
+            weight[k] = remainder * counts[k] / rest_total
+
+    total = sum(weight.values()) or 1.0
+    return [weight[it['_source']] / total / counts[it['_source']]
+            for it in candidates]
 
 
 def item_category(item):
@@ -1085,7 +1132,10 @@ def main():
     # a dead item comes up again, which is nothing.
     item = images = None
     for attempt in range(1, DRAW_ATTEMPTS + 1):
-        pick = random.choice(candidates)
+        # Weighted, so the gazette's 107 cartoons hold their share against
+        # 10,956 photographs. Recomputed each attempt: a failed candidate is
+        # dropped from the list, which changes the per-item weights.
+        pick = random.choices(candidates, weights=draw_weights(candidates))[0]
         print(f'Selected: [{item_id(pick)}] {pick["title"]} '
               f'({item_year(pick) or "?"}) topic={item_category(pick)} '
               f'source={pick["_source"]}')

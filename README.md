@@ -21,9 +21,14 @@ pool it came from.
 | `seoul_dryplate.json` | [National Museum of Korea](https://www.museum.go.kr/dryplate/main.do), Government-General glass plates | 1909-1945 | 1,452 |
 | `seoul_gazette.json` | [Seoul Metropolitan Archives](https://archives.seoul.go.kr/newspaper), 서울시보 cartoons | 1982-83 | 107 of 2,573 |
 
-⚠️ **The share of the feed is just the share of the unposted items**, so at 107
-of 11,063 a gazette cartoon comes up about once in 103 posts: roughly every
-seven weeks at two posts a day. Nothing weights the draw.
+⚠️ **The gazette's share of the feed is set, not left to its size.** Unweighted,
+107 cartoons against 10,956 photographs surfaces one about every seven weeks and
+takes fifteen years to get through them. `SOURCES['gazette']['share'] = 0.10`
+makes it 1 post in 10: a cartoon every five days, and about eighteen months of
+them. The photo pools keep their relative standing exactly, splitting the other
+90% in proportion to their own sizes, which is what the unweighted draw already
+did. See `draw_weights`, which also covers the gazette being absent, being the
+only source (`--source gazette`), and shares misconfigured past 1.
 
 The archive records carry a year and a Korean description, so their posts lead
 with the date. The glass plates are catalogue entries: title, subject path and
