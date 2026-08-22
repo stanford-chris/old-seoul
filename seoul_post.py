@@ -26,15 +26,14 @@ import random
 import re
 import subprocess
 import sys
-import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 from atproto import Client, client_utils
 
 import alt_log
 import image_alt
+import limit_guard
 import net_guard
 
 ARCHIVE = Path(__file__).parent / 'seoul_archive.json'
@@ -301,130 +300,6 @@ def translate_title_only(title_ko):
     return {'title': out.get('title', ''), 'description': '', 'date': ''}
 
 
-# A spent quota is not this run's bug and clears itself at a stated time, so
-# the run waits for it rather than dying, exactly as net_guard waits out a
-# missing network. The budget stays well short of the 12 hours between firings
-# (09:00 and 21:00), so a waiting run can never collide with its successor.
-LIMIT_WAIT_BUDGET_S = 4 * 3600
-# Used only when the refusal carries no reset time. A bounded blind wait beats
-# losing the post, but it is a fallback action, not a claim about when the
-# quota actually clears.
-LIMIT_BLIND_WAIT_S = 3600
-
-# Phrases that mean "come back later". Kept narrow on purpose: see
-# _is_usage_limit.
-_LIMIT_MARKERS = (
-    'hit your limit',
-    'usage limit',
-    'limit reached',
-    'rate limit',
-    'too many requests',
-)
-
-_RESET_RE = re.compile(
-    r'resets?\b[^0-9]{0,12}?(\d{1,2})(?::(\d{2}))?\s*([ap])\.?m\.?'
-    r'(?:\s*\(\s*([A-Za-z][A-Za-z0-9_+\-/]*)\s*\))?',
-    re.I)
-
-
-def _is_usage_limit(err):
-    """True if `claude -p` refused because a quota is spent, not because
-    something is broken.
-
-    ⚠️ This distinction matters far more than the waiting does, and it is why
-    the marker list is narrow rather than a loose search for "limit". A spent
-    quota clears itself; an expired OAuth token never does. scan_filer.py
-    spent five days in August 2026 filing documents unclassified because a 401
-    was swallowed by a fallback that could not tell the two apart. Anything
-    not matched here keeps raising, so a real fault still exits non-zero and
-    harden_audit.sh check 5 still sees it.
-    """
-    low = err.lower()
-    return any(marker in low for marker in _LIMIT_MARKERS)
-
-
-def _parse_reset_time(err, now=None):
-    """The wall-clock moment the refusal says the quota clears, or None.
-
-    The CLI phrases it as `resets 11:40pm (Asia/Seoul)`, so the hour, the
-    optional minutes and the optional zone are all read from the message
-    rather than assumed.
-
-    ⚠️ Wall clock, not a monotonic offset. time.monotonic() does not advance
-    while a Mac is asleep, so a monotonic deadline would overshoot by however
-    long the lid was shut: the 21:00 firing that hit this on 20 August would
-    have woken well after its own reset.
-    """
-    m = _RESET_RE.search(err)
-    if not m:
-        return None
-    hour, minute = int(m.group(1)), int(m.group(2) or 0)
-    if not 1 <= hour <= 12 or minute > 59:
-        return None
-    if m.group(3).lower() == 'p':
-        hour = hour if hour == 12 else hour + 12
-    elif hour == 12:
-        hour = 0
-
-    tz = None
-    if m.group(4):
-        try:
-            tz = ZoneInfo(m.group(4))
-        except Exception:
-            tz = None  # An unknown zone name falls back to local time.
-
-    if now is None:
-        now = datetime.now(tz) if tz else datetime.now().astimezone()
-    elif tz is not None:
-        now = now.astimezone(tz)
-
-    target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-    if target <= now:
-        # The stated time has already passed today, so it means tomorrow.
-        target += timedelta(days=1)
-    return target
-
-
-def wait_for_limit_reset(err, budget_s=LIMIT_WAIT_BUDGET_S, log=print,
-                         sleep=time.sleep, now_fn=None):
-    """Sleep until a spent quota clears. True if it is worth trying again.
-
-    Mirrors net_guard.wait_for_network, and for the same reason: recovering
-    inside the budget costs a late post instead of no post, and running out of
-    budget is one line rather than a traceback.
-    """
-    now_fn = now_fn or (lambda: datetime.now().astimezone())
-    target = _parse_reset_time(err, now=now_fn())
-    if target is None:
-        wait_s = min(LIMIT_BLIND_WAIT_S, budget_s)
-        log(f'claude -p is out of quota and named no reset time. Waiting '
-            f'{wait_s // 60} min before one retry. Message: {err[:120]}')
-        sleep(wait_s)
-        return True
-
-    # A minute past the stated time, because the two clocks are not the same
-    # clock and landing a second early wastes the whole wait.
-    target += timedelta(minutes=1)
-    wait_s = (target - now_fn()).total_seconds()
-    if wait_s <= 0:
-        return True
-    if wait_s > budget_s:
-        log(f'claude -p is out of quota until {target:%H:%M}, which is '
-            f'{wait_s / 3600:.1f} h away and past the {budget_s // 3600} h '
-            f'budget. Skipping this run; the next firing will try again.')
-        return False
-
-    log(f'claude -p is out of quota until {target:%H:%M}. Waiting '
-        f'{wait_s / 60:.0f} min, then retrying once.')
-    # Sleep in chunks and re-read the clock, so a mid-wait sleep/wake is
-    # absorbed rather than leaving the run short or long.
-    while True:
-        remaining = (target - now_fn()).total_seconds()
-        if remaining <= 0:
-            return True
-        sleep(min(60, remaining))
-
-
 def _claude_json(prompt):
     """Run `claude -p` and parse a JSON object from its output, with one retry
     on a timeout or malformed JSON, and one wait-and-retry on a spent quota.
@@ -453,9 +328,9 @@ def _claude_json(prompt):
             # The claude CLI writes some errors (e.g. auth 401s) to stdout, not
             # stderr, so include both to keep failures diagnosable.
             err = (result.stderr or result.stdout or '').strip() or '(no output)'
-            if _is_usage_limit(err) and not limit_waited:
+            if limit_guard.is_usage_limit(err) and not limit_waited:
                 limit_waited = True
-                if wait_for_limit_reset(err):
+                if limit_guard.wait_for_reset(err):
                     continue
                 # Exit 0, not a raise: a spent quota is not a fault in this
                 # bot, and a traceback per firing is what made the August 2026

@@ -27,11 +27,24 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+import limit_guard
+
 # Vision quality is the whole point of this module, and the volume is tiny
 # (a handful of calls a day), so this does not drop to haiku the way the
 # translation step does.
 MODEL = 'claude-sonnet-5'
 TIMEOUT = 120
+
+# How long to wait out a spent `claude -p` quota before giving up and falling
+# back to the citation. Deliberately shorter than a post-critical caller's
+# budget: a description is worth a short wait, because the silent fallback is
+# this estate's known weak spot (bot_alt_check.py exists for it), but it is
+# not worth holding a whole post back all evening for.
+LIMIT_BUDGET_S = 3600
+
+# One quota wait per run, not one per image. Without this a four-image post
+# whose retry also came back limited would wait the budget four times over.
+_limit_waited = False
 MAX_CHARS = 600
 MIN_CHARS = 20
 
@@ -184,23 +197,36 @@ def describe(image_bytes, context='', *, env=None, model=MODEL,
         log('  (image description skipped: no image bytes)')
         return None
 
-    try:
-        with tempfile.TemporaryDirectory() as td:
-            name = f'image{suffix}'
-            Path(td, name).write_bytes(image_bytes)
-            prompt = _PROMPT.format(name=name, context=context or '(none)')
-            r = subprocess.run(
-                ['claude', '-p', '--model', model, prompt],
-                capture_output=True, text=True, env=env, cwd=td,
-                timeout=timeout)
-    except (subprocess.TimeoutExpired, OSError) as exc:
-        log(f'  (image description unavailable: {exc.__class__.__name__})')
-        return None
+    global _limit_waited
+    while True:
+        try:
+            with tempfile.TemporaryDirectory() as td:
+                name = f'image{suffix}'
+                Path(td, name).write_bytes(image_bytes)
+                prompt = _PROMPT.format(name=name, context=context or '(none)')
+                r = subprocess.run(
+                    ['claude', '-p', '--model', model, prompt],
+                    capture_output=True, text=True, env=env, cwd=td,
+                    timeout=timeout)
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            log(f'  (image description unavailable: {exc.__class__.__name__})')
+            return None
 
-    if r.returncode != 0:
-        err = (r.stderr or r.stdout or '').strip()[:200] or '(no output)'
-        log(f'  (image description failed, exit {r.returncode}: {err})')
-        return None
+        if r.returncode != 0:
+            err = (r.stderr or r.stdout or '').strip()[:200] or '(no output)'
+            # A spent quota is the one failure here worth waiting out. Falling
+            # back is silent by design, so a quota exhausted mid-run strips the
+            # descriptions off a whole post and nothing says so at the time.
+            # Anything else still falls back at once: this module must never be
+            # the thing that ends a run.
+            if not _limit_waited and limit_guard.is_usage_limit(err):
+                _limit_waited = True
+                if limit_guard.wait_for_reset(err, budget_s=LIMIT_BUDGET_S,
+                                              log=lambda m: log(f'  {m}')):
+                    continue
+            log(f'  (image description failed, exit {r.returncode}: {err})')
+            return None
+        break
 
     text = re.sub(r'^```[a-z]*\n?|\n?```$', '', r.stdout.strip()).strip()
     text = _EMOJI.sub('', text)
