@@ -29,6 +29,10 @@ date follows the district: the year where the catalogue has one ("Jongno-gu,
 the header while the alt text still stated it, so the post contradicted its own
 description.
 
+A third pool, `seoul_gazette.json`, is harvested but **not posted from**: 2,573
+articles of the 1982-83 city gazette, which are regions of a page rather than
+files and so need a posting shape of their own. See section 1c.
+
 ## How it works
 
 The bot runs in two stages.
@@ -63,6 +67,65 @@ The search endpoint has three quirks worth knowing before editing it: the paging
 parameter is `page` and not `currentPage` (which is accepted and ignored), the
 full set of form fields must be posted or the response comes back empty, and
 `pageSize` is pinned at 10 server-side.
+
+### 1c. Harvest the city gazette (`seoul_gazette_harvest.py`)
+
+Pulls 서울시보, the Seoul city gazette, into `seoul_gazette.json`: 2,573 articles
+across 64 issues and 256 pages, 7 January 1982 to 13 October 1983, about nine
+minutes at one request per second. The archives hold roughly 500 issues and say
+360 are queued, so re-running it picks up whatever they have released since.
+
+**This pool is harvested but not yet wired into `seoul_post.py`.** It needs a
+posting shape of its own, because an item here is a region of a page rather than
+a file:
+
+- Records carry `page_image` plus `box`, `coords` and `page_width`/`page_height`.
+  Whatever posts them has to crop. The archives' boxes are **tight, and sometimes
+  short** — the 7 January 1982 comic strip's own box clips its fourth panel, and
+  about 20px of padding recovers it — so pad and clamp rather than cropping the
+  raw box.
+- 738 of the 2,573 regions (28%) are `poly` rather than `rect`, wrapped in an L
+  around their neighbours, so their bounding box contains part of another
+  article. The raw `coords` are kept so those can be masked instead.
+- Every article has the archives' own Korean transcription in `text`, which is
+  real prose to translate rather than a title alone. Two exceptions to expect:
+  the cartoons transcribe to the artist's name and the org charts to a literal
+  `X`, so for those the title is the content.
+- The visual standouts are 54 `서울만평` editorial cartoons and 53
+  `주사 새서울씨` four-panel strips, both by 정운경, each self-contained enough
+  to post as an image on its own.
+
+Two requests per unit of work, and both are needed: the listing gives 발행번호,
+date and **title**, the viewer gives the page image, its dimensions and every
+article's coordinates and **transcription**. They join on `contentSeq`, which is
+opaque and must be taken from the listing — it looks like issue×100+n until issue
+1 article 1 turns out to be 1 rather than 101.
+
+The endpoint quirks, each of which cost an attempt:
+
+- **`newsPaperSeq` is required alongside `pageSeq`.** Without it the viewer
+  returns HTTP 200 with a 26,713-byte stub, no article data and an image href of
+  `/upload` — an empty page that looks entirely healthy.
+- **`<br/>` is the only markup in a transcription.** Everything else between
+  angle brackets is Korean editorial content: author affiliations (`<수필가>`),
+  photo captions (`<사진설명>`), sub-headings. A generic `<[^>]+>` strip, which
+  is what `seoul_dryplate_harvest.py`'s `clean()` does, deleted 27 such tokens
+  from a 60-article sample.
+- **A few coords arrays are empty in the archives' own data** (`coords : [ , ]`;
+  one of the 2,573 as of 22 August 2026). Those keep their transcription with
+  `box: null` and are counted in the report, rather than being dropped and
+  blamed on the parse.
+
+`--sample N` harvests N evenly-spaced listing pages for a quick test run, and
+`--out PATH` writes somewhere other than `seoul_gazette.json`. A re-run
+**preserves the `posted` flags** of records already on disk and merges rather
+than replaces, so a sample run against the real pool is safe. The script exits
+non-zero if any article failed to join, any id was duplicated or any page could
+not be read: an incomplete harvest must not read as a clean one.
+
+`robots.txt` allows `/newspaper` and `/upload`. It disallows `/catalog/`, where
+the archives' document and drawing records live, and this script never goes
+there.
 
 ### 2. Post (`seoul_post.py`)
 
@@ -113,6 +176,8 @@ Build the archive first (once), then post from it:
 python3 seoul_harvest.py             # full harvest → seoul_archive.json
 python3 seoul_harvest.py --sample 20 # fetch 20 items for a quick test
 python3 seoul_dryplate_harvest.py    # glass plates → seoul_dryplate.json
+python3 seoul_gazette_harvest.py     # city gazette → seoul_gazette.json (~9 min)
+python3 seoul_gazette_harvest.py --sample 5   # 5 spread listing pages
 
 python3 seoul_post.py                     # translate, format and post one item
 python3 seoul_post.py --dry-run           # translate and format without posting

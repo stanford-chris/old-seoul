@@ -2,6 +2,7 @@
 # mutable `posted` flags, so they are runtime state rather than source)
 seoul_archive.json
 seoul_dryplate.json
+seoul_gazette.json
 
 # Runtime state (last-success timestamp)
 seoul_state.json
