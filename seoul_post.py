@@ -1431,7 +1431,13 @@ def main():
 
     image_alts, alt_generated = [], []
     for i, img in enumerate(images):
-        desc = image_alt.describe(img, context=context, env=env)
+        # Curly marks, as the caption already gets. Applied to the model's
+        # description ALONE and not to the assembled string: the provenance
+        # lead and the disclosure are ours and carry no quotes, so running them
+        # through would only widen what a text transform can reach.
+        # educate_quotes passes None straight back, which is what describe()
+        # returns when it fails, so the citation fallback below is unaffected.
+        desc = educate_quotes(image_alt.describe(img, context=context, env=env))
         # Provenance FIRST, then the disclosure, then the description.
         #
         # Until 18 August 2026 the disclosure led the whole string and the

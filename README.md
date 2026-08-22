@@ -189,6 +189,13 @@ like it should have.** Measured across the 62 adverts: 140 characters fits 6% to
 29% of them and 100 fits 96%, because a gazette headline is far longer than a
 photo caption. `format_post` trims at a word boundary for the rest.
 
+The model's image description passes through `educate_quotes` on its way into
+the alt text, so alt matches the caption: `reading “서울특별시”`, not
+`reading '서울특별시'`. Applied to the description alone, not to the assembled
+string — the provenance lead and the disclosure are ours and carry no marks.
+Note this also promotes a matched pair of single quotes to double, which is
+house style but is a behaviour change and not only a character swap.
+
 **A signed drawing credits its artist**: `✏️ 정운경` sits above the source
 credit. ⚠️ The name comes from the record's OWN title, never from the slot.
 Four of the 107 name nobody the source can confirm, and they get no credit
