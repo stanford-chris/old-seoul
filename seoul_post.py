@@ -136,6 +136,12 @@ MAX_POST_CHARS = 290  # leave 10 char buffer under Bluesky's 300 limit
 # N posted topics, so ceremony/construction/official shots don't come in runs.
 CATEGORY_COOLDOWN = 4
 
+# How many candidates to try before giving up, when their pictures will not
+# load. About 3% of the archive pool is dead (see the draw loop in main), so
+# five consecutive failures is ~1 in 350 million by bad luck alone: reaching
+# this limit means the archive host is down, not that the draw was unlucky.
+DRAW_ATTEMPTS = 5
+
 
 def keychain_password(account, service):
     result = subprocess.run(
@@ -678,14 +684,85 @@ def format_post(title_en, desc_en, title_ko, header, item_id, source):
     return tb
 
 
+class ImageFetchError(RuntimeError):
+    """One candidate's picture could not be fetched, or was not a picture."""
+
+
+# The opening bytes of the formats Bluesky accepts.
+#
+# ⚠️ The bytes are checked, NOT the Content-Type header, and that is
+# load-bearing: archives-files.seoul.go.kr serves its live photographs with an
+# EMPTY Content-Type, so a header test would reject every image that actually
+# works. Verified 22 August 2026 against five sampled photoarchive URLs, all
+# 200 with no Content-Type at all, and all posting fine for months.
+_IMAGE_MAGIC = (
+    b'\xff\xd8\xff',        # JPEG
+    b'\x89PNG\r\n\x1a\n',   # PNG
+    b'GIF87a',
+    b'GIF89a',
+)
+
+
+def _looks_like_image(data):
+    if data.startswith(_IMAGE_MAGIC):
+        return True
+    # WebP is RIFF, a 4-byte length, then WEBP, so its marker is not a prefix.
+    return len(data) >= 12 and data[:4] == b'RIFF' and data[8:12] == b'WEBP'
+
+
 def fetch_image(url):
+    """Fetch one image, or raise ImageFetchError.
+
+    ⚠️ Both guards are load-bearing, and the bot lost the 9 p.m. post on
+    21 August 2026 for want of them.
+
+    `curl -s` alone exits 0 on a 404, so the archive's 204-byte HTML error page
+    came back as image bytes and was uploaded to Bluesky as a blob. The PDS
+    sniffs a blob's type from its content — atproto sends every upload as
+    `input_encoding='*/*'` and lets the server decide — could not identify
+    HTML, and echoed `*/*` back. The record validator then rejected the post
+    with `Expected "image/*" (got "*/*")`, and the unhandled exception took the
+    whole run down.
+
+    `-f` makes curl exit non-zero on an HTTP error. The magic-byte check covers
+    what `-f` cannot: a 200 carrying a placeholder, a login page or an error
+    body. Neither guard alone is enough.
+    """
     result = subprocess.run(
-        ['curl', '-s', '--max-time', '30', '-o', '-', url],
+        ['curl', '-fsSL', '--max-time', '30', '-o', '-', url],
         capture_output=True
     )
     if result.returncode != 0:
-        raise RuntimeError(f'Failed to fetch image: {url}')
+        err = result.stderr.decode('utf-8', 'replace').strip()
+        raise ImageFetchError(
+            f'{url}: curl exit {result.returncode}{": " + err if err else ""}')
+    if not _looks_like_image(result.stdout):
+        raise ImageFetchError(
+            f'{url}: not an image ({len(result.stdout)} bytes, '
+            f'starts {result.stdout[:16]!r})')
     return result.stdout
+
+
+def fetch_item_images(item):
+    """Every picture for one item, or ImageFetchError if any one of them fails.
+
+    All-or-nothing on purpose: posting the three frames of an event that did
+    load would silently drop the fourth, and nothing in the post would say so.
+    """
+    all_images = item_images(item)
+    # For large sets, sample 4 frames spread across the whole set (kept in
+    # original order) rather than the first 4, which in an event set are
+    # near-identical opening frames.
+    if len(all_images) > 4:
+        idx = sorted(random.sample(range(len(all_images)), 4))
+        image_urls = [all_images[i] for i in idx]
+    else:
+        image_urls = all_images
+    images = []
+    for url in image_urls:
+        print(f'Fetching image: {url}')
+        images.append(fetch_image(url))
+    return images
 
 
 def main():
@@ -739,12 +816,51 @@ def main():
         # back to the full pool so the bot never goes silent.
         candidates = postable
 
-    # Pick a random item
-    item = random.choice(candidates)
+    # Draw an item and fetch its pictures, re-drawing if they will not load.
+    #
+    # Three things here are deliberate.
+    #
+    # The fetch runs BEFORE translate() rather than after it, which is where it
+    # used to sit. A re-draw then costs a couple of HTTP requests instead of a
+    # wasted `claude -p` call.
+    #
+    # A candidate whose pictures will not load is dropped and another drawn,
+    # rather than taking the run down. 298 of the archive's 9,570 items point
+    # at the C001 collection, which went 404 some time before 21 August 2026,
+    # so roughly one draw in 32 lands on a dead item. Before this loop that was
+    # a silently lost post every fortnight or so.
+    #
+    # ⚠️ A failed item is NOT marked in the pool, however tempting. At this
+    # level a dead image is indistinguishable from an archive having a bad
+    # morning, so marking would permanently burn good items the first time the
+    # host wobbled. The cost of not marking is a couple of wasted requests when
+    # a dead item comes up again, which is nothing.
+    item = images = None
+    for attempt in range(1, DRAW_ATTEMPTS + 1):
+        pick = random.choice(candidates)
+        print(f'Selected: [{item_id(pick)}] {pick["title"]} '
+              f'({item_year(pick) or "?"}) topic={item_category(pick)} '
+              f'source={pick["_source"]}')
+        try:
+            images = fetch_item_images(pick)
+        except ImageFetchError as exc:
+            print(f'  !! image fetch failed: {exc}')
+            candidates = [it for it in candidates if it is not pick]
+            if not candidates:
+                sys.exit('Error: no candidate left with a working image.')
+            print(f'  re-drawing (attempt {attempt} of {DRAW_ATTEMPTS})')
+            continue
+        item = pick
+        break
+
+    if item is None:
+        # Exits non-zero on purpose: this is the archive host being down, not a
+        # bad item, and harden_audit.sh check 5 is what should notice.
+        sys.exit(f'Error: {DRAW_ATTEMPTS} candidates in a row had unusable '
+                 f'images. The archive host is probably down.')
+
     item_cat = item_category(item)
     source = SOURCES[item['_source']]
-    print(f'Selected: [{item_id(item)}] {item["title"]} '
-          f'({item_year(item) or "?"}) topic={item_cat} source={item["_source"]}')
 
     # Translate
     print('Translating...')
@@ -766,20 +882,6 @@ def main():
                             item_id(item), source)
     post_plain = post_text.build_text()
     print(f'\nPost ({len(post_plain)} chars):\n{"-"*40}\n{post_plain}\n{"-"*40}')
-
-    # Fetch up to 4 images. For large sets, sample 4 frames spread across the
-    # whole set (kept in original order) rather than the first 4, which in an
-    # event set are near-identical opening frames.
-    all_images = item_images(item)
-    if len(all_images) > 4:
-        idx = sorted(random.sample(range(len(all_images)), 4))
-        image_urls = [all_images[i] for i in idx]
-    else:
-        image_urls = all_images
-    images = []
-    for url in image_urls:
-        print(f'Fetching image: {url}')
-        images.append(fetch_image(url))
 
     # Alt text describes the PHOTOGRAPH, behind a short provenance lead.
     #
