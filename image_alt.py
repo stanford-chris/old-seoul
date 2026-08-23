@@ -65,7 +65,7 @@ MIN_CHARS = 20
 # attribution-only fallback for when describe() returns None, and that string
 # is catalogue metadata written by a human. Labelling it would be a false
 # claim in the opposite direction.
-DISCLOSURE = 'A.I.-generated description.'
+DISCLOSURE = 'A.I.-generated description:'
 
 _PROMPT = """Write alt text for a blind reader of a social media post, describing the image ./{name}
 
