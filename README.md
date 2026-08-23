@@ -220,6 +220,13 @@ Translation is done by calling the [`claude` CLI](https://docs.claude.com/en/doc
 (`claude -p`, Haiku model), which returns a compact JSON object with the English
 title and a one-sentence description in British date style.
 
+Two of the prompt's rules exist because of one post. A description **keeps a
+reason the Korean gives**: a crackdown described as happening "during monsoon
+season", with the epidemic control that put the season there dropped, leaves a
+reader wondering what the rain had to do with it. And it **does not strengthen
+a verb**: 단속 is a crackdown, not a seizure. The photographs are not a licence
+for either, since the caption is made from the text.
+
 ### 3. Check the English against the Korean (`check_translation`)
 
 Nothing used to. Accuracy rested on instructions inside the translation
@@ -241,6 +248,9 @@ costs good posts:
 - a name, place, institution, number or date rendered wrongly
 - a detail kept without the fact that explains it, so the English leaves a
   season or a figure standing there unexplained
+- a verb that goes further than the Korean: a crackdown rendered as a seizure,
+  an inspection as a raid. What is visible in the photograph does not license
+  it, because the caption is made from the text
 - **not** anything merely left out: both lines are capped at 60 and 100
   characters and dropping material is expected
 - **not** style, length, romanisation, or anything about the picture, which
