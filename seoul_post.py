@@ -494,6 +494,7 @@ def translate(title_ko, description_ko, year):
         f'- Do not add interpretation or extra context\n'
         f'- UK English spelling: modernisation not modernization, harbour not harbor, centre not center\n'
         f'- Write "percent" as one word, never "per cent"\n'
+        f'- NO serial comma: "drinks, ices and meat", never "drinks, ices, and meat"\n'
         f'- Quote with double quotation marks, never single ones — a "comfort women" camp, not a \'comfort women\' camp\n'
         f'- Use British date format for any dates (e.g. 9 June 1972, not June 9 1972 or 06/09/1972)\n'
         f'- Write quantities of one thousand or more with thousands separators (e.g. 3,000 officials, 25,000 spectators), but never put a separator in a year (write 1972, not 1,972)\n'
@@ -526,6 +527,16 @@ def translate_title_only(title_ko):
     out = _claude_json(prompt)
     # Downstream expects all three keys; only the title is ever populated here.
     return {'title': out.get('title', ''), 'description': '', 'date': ''}
+
+
+# ⚠️ House style split, worth knowing before adding another rule. Quotation
+# marks, capitals after a colon and thousands separators are enforced in code
+# (promote_single_quotes, capitalize_after_colon, group_thousands) because an
+# instruction the model follows most of the time still ships the exception. The
+# serial comma is NOT, and is asked for in the prompts alone: ", and" is
+# legitimate between two independent clauses, so a transform that stripped it
+# would mangle real sentences to fix a list. Two shipped posts carried one
+# before the rule was added (19 and 12 July 2026), which is the rate to watch.
 
 
 def translate_gazette(item):
@@ -577,6 +588,7 @@ _GAZETTE_HOUSE_RULES = (
     '- UK English spelling: modernisation not modernization, harbour not '
     'harbor, centre not center\n'
     '- Write "percent" as one word, never "per cent"\n'
+    '- NO serial comma: "drinks, ices and meat", never "drinks, ices, and meat"\n'
     '- Quote with double quotation marks, never single ones\n'
     '- Use British date format for any dates (e.g. 9 June 1972)\n'
     '- Write quantities of one thousand or more with thousands separators '
