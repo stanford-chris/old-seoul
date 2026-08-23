@@ -23,6 +23,7 @@ Usage:
     python3 seoul_post.py                      # post one item
     python3 seoul_post.py --dry-run            # translate and format, no post
     python3 seoul_post.py --source gazette     # restrict the pool to one source
+    python3 seoul_post.py --checks 20          # recent translation-check verdicts
 """
 
 import json
@@ -48,6 +49,11 @@ GAZETTE = Path(__file__).parent / 'seoul_gazette.json'
 # whether it was generated or fell back. Written only on a real post, and
 # best-effort: see alt_log.
 ALT_LOG = Path(__file__).parent / 'alt_history.jsonl'
+# One JSONL line per translation checked, INCLUDING the ones the check
+# rejected. Those are the records worth having: a rejected draft never reaches
+# the feed, so this file is the only place a false alarm can ever be seen. See
+# check_translation.
+CHECK_LOG = Path(__file__).parent / 'translation_checks.jsonl'
 HANDLE = 'oldhanyang.bsky.social'
 KEYCHAIN_SERVICE = 'seoulbot-bluesky'
 
@@ -159,7 +165,7 @@ SOURCES = {
 # Refuse anything unrecognised. Until August 2026 this was a bare membership
 # test, so an unknown flag (`--help` above all) fell through to a LIVE post:
 # the same trap that published a real thread from seoul-index on 20 Jul 2026.
-_KNOWN_ARGS = {'--dry-run', '--tail', '--source'}
+_KNOWN_ARGS = {'--dry-run', '--tail', '--checks', '--source'}
 
 
 def _tail_n(argv):
@@ -168,6 +174,17 @@ def _tail_n(argv):
     if '--tail' not in argv:
         return None
     i = argv.index('--tail')
+    if i + 1 < len(argv) and argv[i + 1].isdigit():
+        return max(1, int(argv[i + 1]))
+    return 10
+
+
+def _checks_n(argv):
+    """N for `--checks [N]` (print recent translation-check verdicts and
+    exit), or None if absent. Same shape as --tail."""
+    if '--checks' not in argv:
+        return None
+    i = argv.index('--checks')
     if i + 1 < len(argv) and argv[i + 1].isdigit():
         return max(1, int(argv[i + 1]))
     return 10
@@ -190,10 +207,11 @@ if __name__ == '__main__':
     # Indices of values belonging to a preceding flag, so they are not mistaken
     # for unknown arguments.
     _skip = set()
-    if '--tail' in sys.argv:
-        _t = sys.argv.index('--tail')
-        if _t + 1 < len(sys.argv) and sys.argv[_t + 1].isdigit():
-            _skip.add(_t + 1)
+    for _flag in ('--tail', '--checks'):
+        if _flag in sys.argv:
+            _f = sys.argv.index(_flag)
+            if _f + 1 < len(sys.argv) and sys.argv[_f + 1].isdigit():
+                _skip.add(_f + 1)
     if '--source' in sys.argv:
         _s = sys.argv.index('--source')
         if _s + 1 < len(sys.argv):
@@ -207,6 +225,7 @@ if __name__ == '__main__':
 
 DRY_RUN = '--dry-run' in sys.argv
 TAIL_N = _tail_n(sys.argv)
+CHECKS_N = _checks_n(sys.argv)
 SOURCE_FILTER = _source_filter(sys.argv)
 
 MAX_POST_CHARS = 290  # leave 10 char buffer under Bluesky's 300 limit
@@ -243,6 +262,20 @@ CLAUDE_TOKEN_SERVICE = 'claude-oauth-token'
 # launchd job indefinitely (the failure mode seen in seoul-index and
 # scan_filer before they grew the same guard, July 2026).
 CLAUDE_TIMEOUT = 300
+
+# Translating is Haiku's job and has been since the bot was built. Checking the
+# result is not: check_translation is the only thing between a wrong caption
+# and a post that cannot be corrected in place (putRecord updates the PDS and
+# the appview keeps serving the old text, 16 August 2026), and a checker no
+# stronger than the writer mostly agrees with it. One call per post on a job
+# that runs twice a day, so the stronger model is affordable.
+TRANSLATE_MODEL = 'claude-haiku-4-5-20251001'
+CHECK_MODEL = 'claude-sonnet-5'
+
+# Attempts at a translation the check will accept. The second is a fresh
+# translation, not a repair: the model is not shown its own rejected answer,
+# which would invite it to defend the wording rather than redo the reading.
+TRANSLATE_ATTEMPTS = 2
 
 
 def claude_env():
@@ -622,7 +655,266 @@ def _gazette_notice_prompt(item, label):
     )
 
 
-def _claude_json(prompt):
+# A year, bounded by digits rather than by \b: Korean writes 1965년, and Hangul
+# is a word character, so \b finds no boundary after the 5 and the year in the
+# source would read as absent.
+_YEAR = re.compile(r'(?<!\d)(1[89]\d{2}|20\d{2})(?!\d)')
+
+
+def stray_years(item, *texts):
+    """Years the English states that appear nowhere in the item's own record.
+
+    The one check here that cannot itself be wrong, and the reason it is worth
+    having next to a model: it is the failure with the least excuse. A date is
+    the first thing a reader takes from a historical photograph, and a caption
+    is the last place to guess one.
+
+    ⚠️ Direction is the whole design. This asks only what the English ADDED.
+    Dropping a figure is expected — the lines are capped at 60 and 100
+    characters — so a check that ran the other way would flag every honest
+    translation.
+
+    Years only, deliberately, and NOT quantities. Korean counts in units of
+    만 and 억, so a faithful "3,000,000 won" comes from a source reading 300만원
+    and a digit-for-digit test calls it invented; written-out numerals (이천)
+    do the same. Quantities are check_translation's job, which can read them.
+    """
+    known = ' '.join(str(v) for v in (
+        item.get('title') or '', item_desc(item), item_year(item),
+        item.get('date') or '', item.get('period') or ''))
+    known_years = set(_YEAR.findall(known))
+    found = set()
+    for text in texts:
+        found |= set(_YEAR.findall(text or ''))
+    return sorted(found - known_years)
+
+
+def _check_mode(item):
+    """One paragraph telling the checker what KIND of English it is reading.
+
+    Without it the check is wrong in both directions at once: it reports a
+    glass plate's absent description as a missing translation, and it passes a
+    municipal notice that has been smoothed into something vaguer than the
+    Korean, because a summary that leaves things out is supposed to.
+    """
+    if item['_source'] == 'gazette':
+        if GAZETTE_SLOTS[item['tag']]['kind'] == 'notice':
+            return (
+                'This is an advertisement from a city gazette, and the English '
+                'description is a SUMMARY of a long notice. It is MEANT to be '
+                'partial: conditions left out are correct and must not be '
+                'reported. What is a problem is a specific condition widened '
+                'into a vaguer one that covers it — "open to staff" where the '
+                'Korean says one member of each department at grade 4 or above '
+                'must attend — or a sum, a date or a deadline that is not in '
+                'the Korean.')
+        return (
+            'This is a cartoon or a comic strip, and the Korean is the '
+            "archive's transcription of the words printed in it: a caption, or "
+            'the speech bubbles. NOBODY in this chain has seen the drawing. A '
+            'sentence describing the drawing, the characters, the composition '
+            "or the artist's style is therefore invented, however plausible it "
+            'reads, and that is the one thing to report here.')
+    if not item_desc(item):
+        return (
+            'This is a museum catalogue entry for a building or a site. It has '
+            'no Korean description, so the English description is EMPTY BY '
+            'DESIGN and its emptiness is not a fault: writing one would be '
+            'invention. Check the title alone, as a rendering of a named '
+            'structure.')
+    return (
+        "This is an archive photograph and its catalogue description. The "
+        'English description should say what the Korean description says, '
+        'shorter.')
+
+
+def _check_prompt(item, title_en, desc_en):
+    return (
+        f'You are checking an English caption written by another model against '
+        f'the Korean it was made from. This is a factual check, not an edit, '
+        f'and nothing you write is published.\n\n'
+        f'Korean title: {item["title"]}\n'
+        f'Korean text: {item_desc(item) or "(none — this record is title-only)"}\n'
+        f'Catalogue year: {item_year(item) or "unknown"}\n\n'
+        f'English title: {title_en}\n'
+        f'English description: {desc_en or "(none)"}\n\n'
+        f'{_check_mode(item)}\n\n'
+        f'Report a problem ONLY where you can point at the Korean that makes '
+        f'it wrong:\n'
+        f'- a statement the Korean does not support, or contradicts\n'
+        f'- a name, place, institution, number or date rendered wrongly\n'
+        f'- a misreading of the Korean\n'
+        f'- a detail kept without the fact that explains it, so the English '
+        f'leaves a season, a place or a figure standing there unexplained '
+        f'where the Korean says plainly why it is there\n\n'
+        f'NEVER report these:\n'
+        f'- anything merely left out. Both lines are hard-capped at 60 and 100 '
+        f'characters and dropping material is expected\n'
+        f'- style, tone, register, spelling, capitalisation, length, or '
+        f'wording you would have chosen differently\n'
+        f'- anything about the photograph or drawing itself: it has not been '
+        f'seen by the writer, by you, or by anyone in this chain\n'
+        f'- a romanisation spelled another way than you would spell it\n\n'
+        f'If you are unsure, PASS it. A false alarm here costs a good post, '
+        f'and an English caption that is merely not how you would have put it '
+        f'is not a fault.\n'
+        f'Return JSON only, an empty string where there is no problem and one '
+        f'short sentence naming it where there is: '
+        f'{{"title": "", "description": ""}}')
+
+
+def check_translation(item, title_en, desc_en, log=print):
+    """Check the English against the Korean BEFORE anything is posted.
+
+    Returns {'title': problem or '', 'description': problem or '',
+             'error': why the check could not run}.
+
+    Why before rather than after: a published post cannot be corrected in
+    place. `putRecord` with `swapRecord` succeeds and the PDS serves the new
+    text, but the appview went on serving the old for the 35 minutes it was
+    watched (16 August 2026), so app and web readers never saw the fix.
+    Correcting a live caption means a fresh record and a deleted one, which
+    costs the permalink and any likes it had. A check that runs after the post
+    can only ever report.
+
+    ⚠️ A check that cannot run is NOT a failure. If the call errors the post
+    goes out unchecked, which is exactly what every post before this function
+    existed did, and the fallback is recorded so a checker that has been broken
+    for a week is visible in the log rather than silently absent. Taking the
+    bot off the air because its second opinion is unreachable would be the
+    check causing the outage it exists to prevent.
+    """
+    stray = stray_years(item, title_en, desc_en)
+    if stray:
+        # Deterministic, so it does not need the model's agreement and does not
+        # get a vote from it: a year that is in neither the caption, the
+        # description, the catalogue year nor the record's date was invented.
+        return {'title': '', 'error': '',
+                'description': f'states a year the record does not: '
+                               f'{", ".join(stray)}'}
+    try:
+        out = _claude_json(_check_prompt(item, title_en, desc_en),
+                           model=CHECK_MODEL)
+    except RuntimeError as exc:
+        log(f'  (translation check did not run: {exc})')
+        return {'title': '', 'description': '', 'error': str(exc)}
+    return {'title': (out.get('title') or '').strip(),
+            'description': (out.get('description') or '').strip(),
+            'error': ''}
+
+
+def house_style(text):
+    """The deterministic style pass every translated line goes through."""
+    return capitalize_after_colon(group_thousands(educate_quotes(text or '')))
+
+
+def translate_checked(item, log=print):
+    """Translate one item and check it, returning (title, description, date)
+    or None when the title could not be trusted and the item should be dropped.
+
+    What happens on a flag, and why (user's decision, 23 August 2026):
+
+      retry once   — most flags are one bad reading, and a fresh translation of
+                     the same Korean usually fixes it. Cheap, and it keeps the
+                     item.
+      description  — flagged twice, so the description is the part that cannot
+      dropped        be trusted. The title alone is a complete post: the bot
+                     already publishes wordless cartoons under their slot name
+                     and drops a description that restates the title.
+      item redrawn — the TITLE flagged twice. Nothing survives that is worth
+                     posting, and unlike a dead image this item is not marked,
+                     so it returns to the pool for another day and another
+                     reading.
+    """
+    for attempt in range(1, TRANSLATE_ATTEMPTS + 1):
+        if item['_source'] == 'gazette':
+            raw = translate_gazette(item)
+        else:
+            raw = translate(item['title'], item_desc(item), item_year(item))
+        title_en = house_style(raw.get('title'))
+        desc_en = house_style(raw.get('description'))
+        date_raw = (raw.get('date') or '').strip()
+        log(f'  EN title: {title_en}')
+        log(f'  EN desc:  {desc_en}')
+        if desc_en and desc_restates_title(title_en, desc_en):
+            log('  EN desc restates the title — dropped.')
+            desc_en = ''
+        # Checked AFTER the style pass and the restatement drop, so what is
+        # checked is the text that would actually ship rather than a draft of
+        # it.
+        problems = check_translation(item, title_en, desc_en, log=log)
+        if not (problems['title'] or problems['description']):
+            log_check(item, title_en, desc_en, problems, attempt, 'passed')
+            return title_en, desc_en, date_raw
+        for field in ('title', 'description'):
+            if problems[field]:
+                log(f'  !! {field} failed the check: {problems[field]}')
+        if attempt < TRANSLATE_ATTEMPTS:
+            log_check(item, title_en, desc_en, problems, attempt, 'retranslated')
+            log('  re-translating')
+            continue
+        if problems['title']:
+            log_check(item, title_en, desc_en, problems, attempt, 'redrawn')
+            return None
+        log_check(item, title_en, desc_en, problems, attempt, 'description dropped')
+        log('  posting the title alone')
+        return title_en, '', date_raw
+
+
+def tail_checks(path, n, log=print):
+    """Print the last n translation-check verdicts, newest last, with the
+    share that failed.
+
+    That share is the number to read. A run of passes says the translator is
+    doing its job; a run of failures says one of the two models is wrong and
+    the Korean beside each verdict is how to tell which. Read-only: no
+    archive, no model, no post.
+    """
+    recs = alt_log.read(path)
+    if not recs:
+        log(f'No translation checks logged yet at {path}.')
+        return
+    flagged = [r for r in recs if r.get('problems')]
+    log(f'Last {min(n, len(recs))} of {len(recs)} verdict(s); '
+        f'{len(flagged)}/{len(recs)} found a problem.')
+    for r in recs[-n:]:
+        mark = '!!' if r.get('problems') else 'ok'
+        log(f'\n{mark} {r.get("at", "?")}  [{r.get("id", "?")}] '
+            f'{r.get("source", "?")}  attempt {r.get("attempt", "?")}  '
+            f'-> {r.get("action", "?")}' + ('  (dry run)' if r.get('dry') else ''))
+        log(f'  KO  {r.get("title_ko", "")} / {r.get("desc_ko", "")}'.rstrip(' /'))
+        log(f'  EN  {r.get("title_en", "")} / {r.get("desc_en", "")}'.rstrip(' /'))
+        for field, problem in (r.get('problems') or {}).items():
+            log(f'  !!  {field}: {problem}')
+
+
+def log_check(item, title_en, desc_en, problems, attempt, action):
+    """One line per verdict, the rejected drafts included.
+
+    Those are the point. A rejected draft never reaches the feed, so this file
+    is the only place a false alarm is ever visible, and a checker quietly
+    rejecting good captions looks from outside exactly like a bot having a
+    quiet week. Written on dry runs too, flagged as such.
+    """
+    alt_log.append(CHECK_LOG, {
+        'at': datetime.now(timezone.utc).astimezone().strftime('%Y-%m-%d %H:%M:%S'),
+        'id': item_id(item),
+        'source': item['_source'],
+        'attempt': attempt,
+        'action': action,
+        'title_ko': item.get('title') or '',
+        # Enough of the Korean to re-read the verdict without the pool file to
+        # hand; a gazette notice runs to hundreds of characters and the whole
+        # body is not what this log is for.
+        'desc_ko': item_desc(item)[:400],
+        'title_en': title_en,
+        'desc_en': desc_en,
+        'problems': {k: v for k, v in problems.items() if v},
+        'dry': DRY_RUN,
+    })
+
+
+def _claude_json(prompt, model=TRANSLATE_MODEL):
     """Run `claude -p` and parse a JSON object from its output, with one retry
     on a timeout or malformed JSON, and one wait-and-retry on a spent quota.
 
@@ -635,7 +927,7 @@ def _claude_json(prompt):
     while True:
         try:
             result = subprocess.run(
-                ['claude', '-p', '--model', 'claude-haiku-4-5-20251001', prompt],
+                ['claude', '-p', '--model', model, prompt],
                 capture_output=True, text=True, env=claude_env(),
                 timeout=CLAUDE_TIMEOUT
             )
@@ -1280,6 +1572,9 @@ def main():
     if TAIL_N is not None:
         alt_log.tail(ALT_LOG, TAIL_N)
         return
+    if CHECKS_N is not None:
+        tail_checks(CHECK_LOG, CHECKS_N)
+        return
 
     # Load every pool into one combined candidate list. Each item is tagged with
     # the key of the pool it came from, so the post format, the credit and the
@@ -1330,13 +1625,18 @@ def main():
         # back to the full pool so the bot never goes silent.
         candidates = postable
 
-    # Draw an item and fetch its pictures, re-drawing if they will not load.
+    # Draw an item, fetch its pictures and translate it, re-drawing if the
+    # pictures will not load or the English cannot be trusted.
     #
-    # Three things here are deliberate.
+    # Four things here are deliberate.
     #
     # The fetch runs BEFORE translate() rather than after it, which is where it
     # used to sit. A re-draw then costs a couple of HTTP requests instead of a
     # wasted `claude -p` call.
+    #
+    # Translating INSIDE the loop is what lets translate_checked reject an
+    # item. A title its check refuses twice is not a caption worth publishing,
+    # and the only remedy left at that point is a different photograph.
     #
     # A candidate whose pictures will not load is dropped and another drawn,
     # rather than taking the run down. 298 of the archive's 9,570 items point
@@ -1350,6 +1650,8 @@ def main():
     # host wobbled. The cost of not marking is a couple of wasted requests when
     # a dead item comes up again, which is nothing.
     item = images = None
+    title_en = desc_en = date_raw = ''
+    unusable = 0
     for attempt in range(1, DRAW_ATTEMPTS + 1):
         # Weighted, so the gazette's 107 cartoons hold their share against
         # 10,956 photographs. Recomputed each attempt: a failed candidate is
@@ -1359,45 +1661,45 @@ def main():
               f'({item_year(pick) or "?"}) topic={item_category(pick)} '
               f'source={pick["_source"]}')
         try:
-            images = fetch_item_images(pick)
+            picked_images = fetch_item_images(pick)
         except ImageFetchError as exc:
             print(f'  !! image fetch failed: {exc}')
+            unusable += 1
             candidates = [it for it in candidates if it is not pick]
             if not candidates:
                 sys.exit('Error: no candidate left with a working image.')
             print(f'  re-drawing (attempt {attempt} of {DRAW_ATTEMPTS})')
             continue
-        item = pick
+        print('Translating...')
+        checked = translate_checked(pick)
+        if checked is None:
+            candidates = [it for it in candidates if it is not pick]
+            if not candidates:
+                sys.exit('Error: no candidate left whose title passed the '
+                         'translation check.')
+            print(f'  re-drawing (attempt {attempt} of {DRAW_ATTEMPTS})')
+            continue
+        item, images = pick, picked_images
+        title_en, desc_en, date_raw = checked
         break
 
     if item is None:
-        # Exits non-zero on purpose: this is the archive host being down, not a
-        # bad item, and harden_audit.sh check 5 is what should notice.
-        sys.exit(f'Error: {DRAW_ATTEMPTS} candidates in a row had unusable '
-                 f'images. The archive host is probably down.')
+        # Exits non-zero on purpose, and says which of the two ran out: a run
+        # of dead images is the archive host being down (harden_audit.sh check
+        # 5 is what should notice), while a run of rejected titles is either
+        # the translator or the checker itself having gone wrong, and
+        # translation_checks.jsonl holds the evidence for which.
+        sys.exit(f'Error: {DRAW_ATTEMPTS} candidates in a row were unusable '
+                 f'({unusable} for images, {DRAW_ATTEMPTS - unusable} for a '
+                 f'title that failed the translation check).')
 
     item_cat = item_category(item)
     source = SOURCES[item['_source']]
 
-    # Translate
-    print('Translating...')
-    if item['_source'] == 'gazette':
-        translation = translate_gazette(item)
-    else:
-        translation = translate(item['title'], item_desc(item), item_year(item))
-    title_en = capitalize_after_colon(
-        group_thousands(educate_quotes(translation['title'])))
-    desc_en = capitalize_after_colon(
-        group_thousands(educate_quotes(translation['description'])))
     # A record that states its own exact day beats anything the model found.
-    date_en = item_date_en(item) or (translation.get('date') or '').strip()
-    print(f'  EN title: {title_en}')
-    print(f'  EN desc:  {desc_en}')
+    date_en = item_date_en(item) or date_raw
     if date_en:
         print(f'  Precise date: {date_en}')
-    if desc_en and desc_restates_title(title_en, desc_en):
-        print('  EN desc restates the title — dropped.')
-        desc_en = ''
 
     # Format post
     header = post_header(item, source, date_en)

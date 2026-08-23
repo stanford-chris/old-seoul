@@ -26,3 +26,7 @@ venv/
 # One line per posted item, recording the alt text that shipped and whether it
 # was generated or fell back, for skimming output to catch duds (local log)
 alt_history.jsonl
+
+# One line per translation-check verdict, the rejected drafts included, for
+# reading how often the check fires and whether it was right (local log)
+translation_checks.jsonl
