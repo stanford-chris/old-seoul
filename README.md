@@ -264,6 +264,15 @@ Every verdict is logged to `translation_checks.jsonl`, **including the drafts
 it rejected**. Those never reach the feed, so the log is the only place a
 false alarm can ever be seen.
 
+A verdict that changed what shipped is also reported to `~/Scripts/observe.py`
+if that file exists, which is a shared log a weekly review reads, so a check
+firing three weeks running is visible as one recurring condition rather than
+three unrelated events. A dropped description and a rejected title are filed
+separately, a retry that then passed is not a finding at all, and the case
+worth having most is the check that could not *run*: posts keep going out when
+it fails, so a checker broken for a week looks exactly like a quiet week.
+Nothing here depends on it: with no `observe.py` the bot runs unchanged.
+
 ## Requirements
 
 - Python 3.9+
