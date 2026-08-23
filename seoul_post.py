@@ -888,6 +888,74 @@ def tail_checks(path, n, log=print):
             log(f'  !!  {field}: {problem}')
 
 
+# The estate's shared notebook, which a Sunday review reads to say "this has
+# now happened three times". Optional on purpose: this repository is public and
+# the bot runs perfectly well without it, so a machine that has no observe.py
+# gets silence rather than an error.
+OBSERVE = Path.home() / 'Scripts' / 'observe.py'
+
+# What each verdict means to that review, as (kind, key).
+#
+# ⚠️ The key is the whole mechanism. Two reports of one condition must share a
+# key or the review reads them as unrelated events, and two conditions must not
+# share one or they collapse into a streak that never happened. So a dropped
+# description and a rejected title are kept apart: one is a post that went out
+# thinner than it should have, the other is a photograph that never went out at
+# all.
+#
+# A retry that then passed is 'ok', not a finding. It is the common benign case
+# and the machinery working as designed; filed as a finding it would recur
+# every week and teach the review to be ignored, which is the failure the
+# digest is built to avoid. Only an outcome that changed what shipped is a
+# finding.
+OBSERVATIONS = {
+    'passed': ('ok', 'old-seoul-translation-ok'),
+    'retranslated': ('ok', 'old-seoul-translation-retried'),
+    'description dropped': ('finding',
+                            'old-seoul-translation-description-dropped'),
+    'redrawn': ('finding', 'old-seoul-translation-title-rejected'),
+}
+
+# The one most worth having. A check that cannot run is invisible from outside:
+# the posts keep going out, so a checker broken for a week looks exactly like a
+# week with nothing wrong in it.
+UNAVAILABLE = ('finding', 'old-seoul-translation-check-unavailable')
+
+
+def observe(item, problems, action):
+    """Tell the shared log what the check decided. Best-effort, always.
+
+    ⚠️ Dry runs are not logged. A --dry-run is someone testing, and a test that
+    files itself with the Sunday review as a rejected translation is a fault
+    invented by the reporting of it.
+
+    An action with no mapping is silence rather than a KeyError: note-taking
+    must never be what takes a post down. test_translation_check.py asserts
+    every action the flow can emit is mapped, so an unmapped one is caught
+    there instead of going quietly unobserved here.
+    """
+    if DRY_RUN or not OBSERVE.exists():
+        return
+    if problems.get('error'):
+        kind, key = UNAVAILABLE
+        text = f'translation check did not run: {problems["error"][:120]}'
+    else:
+        mapped = OBSERVATIONS.get(action)
+        if mapped is None:
+            return
+        kind, key = mapped
+        problem = problems.get('title') or problems.get('description') or ''
+        text = f'[{item_id(item)}] {action}' + (f': {problem}' if problem else '')
+    try:
+        subprocess.run(
+            ['python3', str(OBSERVE), 'add',
+             '--source', 'old-seoul-translation',
+             '--kind', kind, '--key', key, '--quiet', text],
+            capture_output=True, timeout=20)
+    except Exception:      # noqa: BLE001 - never let note-taking break a post
+        pass
+
+
 def log_check(item, title_en, desc_en, problems, attempt, action):
     """One line per verdict, the rejected drafts included.
 
@@ -912,6 +980,7 @@ def log_check(item, title_en, desc_en, problems, attempt, action):
         'problems': {k: v for k, v in problems.items() if v},
         'dry': DRY_RUN,
     })
+    observe(item, problems, action)
 
 
 def _claude_json(prompt, model=TRANSLATE_MODEL):

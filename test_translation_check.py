@@ -15,6 +15,7 @@ post on 23 August 2026 is what prompted this check to be written.
 """
 
 import unittest
+from pathlib import Path
 
 import seoul_post
 
@@ -149,6 +150,87 @@ class Verdicts(unittest.TestCase):
               'date': '17 July 1968'}],
             [{'title': '', 'description': '', 'error': ''}])
         self.assertEqual(out[2], '17 July 1968')
+
+
+class Observations(unittest.TestCase):
+    """What the Sunday estate review is told. The mapping is the thing worth
+    testing: an action nobody mapped goes unobserved in silence, which is the
+    right behaviour at run time and a bug to be caught here."""
+
+    def setUp(self):
+        self.calls = []
+        self._real = (seoul_post.subprocess.run, seoul_post.DRY_RUN,
+                      seoul_post.OBSERVE)
+        seoul_post.subprocess.run = lambda cmd, **kw: self.calls.append(cmd)
+        seoul_post.DRY_RUN = False
+        # Any file that exists, standing in for ~/Scripts/observe.py.
+        seoul_post.OBSERVE = Path(__file__).resolve()
+
+    def tearDown(self):
+        (seoul_post.subprocess.run, seoul_post.DRY_RUN,
+         seoul_post.OBSERVE) = self._real
+
+    def observe(self, problems, action):
+        seoul_post.observe(ITEM, problems, action)
+        return self.calls[0] if self.calls else None
+
+    def test_every_action_the_flow_emits_is_mapped(self):
+        # These four are exactly the strings translate_checked passes to
+        # log_check. A fifth added there without a mapping would be logged to
+        # the JSONL and never reach the review.
+        for action in ('passed', 'retranslated', 'description dropped',
+                       'redrawn'):
+            self.assertIn(action, seoul_post.OBSERVATIONS)
+
+    def test_a_clean_pass_is_ok_not_a_finding(self):
+        cmd = self.observe({'title': '', 'description': '', 'error': ''},
+                           'passed')
+        self.assertIn('ok', cmd)
+        self.assertNotIn('finding', cmd)
+
+    def test_a_retry_that_passed_is_not_a_finding(self):
+        # The common benign case. Filed as a finding it would recur weekly and
+        # train the review to be ignored.
+        cmd = self.observe({'title': '', 'description': 'unsupported',
+                            'error': ''}, 'retranslated')
+        self.assertIn('ok', cmd)
+
+    def test_a_dropped_description_and_a_rejected_title_do_not_share_a_key(self):
+        dropped = self.observe({'title': '', 'description': 'unsupported',
+                                'error': ''}, 'description dropped')
+        self.calls = []
+        rejected = self.observe({'title': 'misreads', 'description': '',
+                                 'error': ''}, 'redrawn')
+        self.assertIn('finding', dropped)
+        self.assertIn('finding', rejected)
+        self.assertNotEqual(dropped[dropped.index('--key') + 1],
+                            rejected[rejected.index('--key') + 1])
+
+    def test_a_check_that_could_not_run_is_its_own_finding(self):
+        cmd = self.observe({'title': '', 'description': '',
+                            'error': 'claude -p timed out'}, 'passed')
+        self.assertIn('finding', cmd)
+        self.assertEqual(cmd[cmd.index('--key') + 1],
+                         'old-seoul-translation-check-unavailable')
+
+    def test_a_dry_run_tells_the_review_nothing(self):
+        seoul_post.DRY_RUN = True
+        self.assertIsNone(
+            self.observe({'title': 'misreads', 'description': '', 'error': ''},
+                         'redrawn'))
+
+    def test_an_unmapped_action_is_silence_not_a_crash(self):
+        self.assertIsNone(
+            self.observe({'title': '', 'description': '', 'error': ''},
+                         'something new'))
+
+    def test_a_missing_notebook_is_silence_not_an_error(self):
+        # This repository is public; a machine with no ~/Scripts/observe.py
+        # must still post.
+        seoul_post.OBSERVE = Path('/nonexistent/observe.py')
+        self.assertIsNone(
+            self.observe({'title': '', 'description': '', 'error': ''},
+                         'passed'))
 
 
 class GroupsQuantitiesNotPhoneNumbers(unittest.TestCase):
