@@ -151,5 +151,40 @@ class Verdicts(unittest.TestCase):
         self.assertEqual(out[2], '17 July 1968')
 
 
+class GroupsQuantitiesNotPhoneNumbers(unittest.TestCase):
+    """group_thousands, tested here because the check above is what caught it:
+    on the first live check of a gazette notice it reported "(725) 7,736" as a
+    figure the Korean never gave, which it was."""
+
+    def test_a_bracketed_phone_number_is_left_alone(self):
+        self.assertEqual(
+            seoul_post.group_thousands('Contact (725) 7736 ext. 436.'),
+            'Contact (725) 7736 ext. 436.')
+
+    def test_a_hyphenated_phone_number_is_left_alone(self):
+        self.assertEqual(seoul_post.group_thousands('Ring 725-7736 today.'),
+                         'Ring 725-7736 today.')
+
+    def test_a_full_phone_number_is_left_alone(self):
+        self.assertEqual(seoul_post.group_thousands('02-725-7736'),
+                         '02-725-7736')
+
+    def test_quantities_are_still_separated(self):
+        self.assertEqual(seoul_post.group_thousands('3000 officials attended.'),
+                         '3,000 officials attended.')
+        self.assertEqual(seoul_post.group_thousands('25000 spectators'),
+                         '25,000 spectators')
+        self.assertEqual(seoul_post.group_thousands('3000000 won'),
+                         '3,000,000 won')
+
+    def test_a_year_is_still_left_alone(self):
+        self.assertEqual(seoul_post.group_thousands('Opened in 1972.'),
+                         'Opened in 1972.')
+
+    def test_an_already_separated_number_is_untouched(self):
+        self.assertEqual(seoul_post.group_thousands('2,000 spectators'),
+                         '2,000 spectators')
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -1089,6 +1089,13 @@ def educate_quotes(text):
     return ''.join(out)
 
 
+# A run of four or more digits that is a quantity rather than part of a phone
+# number: not preceded by a hyphen, a closing bracket or a bracket-and-space,
+# and not followed by a hyphen. Two fixed-width lookbehinds rather than one
+# alternation, because Python requires each to be a fixed width.
+_GROUPABLE = re.compile(r'(?<![-)\d,])(?<![-)] )\d{4,}(?!-)')
+
+
 def group_thousands(text):
     """Add thousands separators to large integers in English captions, without
     touching years (3000 -> 3,000, but 1972 stays 1972).
@@ -1103,6 +1110,15 @@ def group_thousands(text):
     already-comma'd number ('2,000') has no four-digit run left for this to
     touch, so the two passes don't fight. Only the English fields go through
     this; Korean text is untouched.
+
+    ⚠️ A number is NOT always a quantity. The gazette's notices print the
+    office to ring, and the first live check of one turned "(725) 7736" into
+    "(725) 7,736" — found 23 August 2026 by the translation check, which read
+    it as a figure the Korean did not give, correctly. So a run touching phone
+    punctuation is left alone: preceded by a hyphen or by a closing bracket,
+    or followed by a hyphen, which between them cover 725-7736, (725) 7736 and
+    02-725-7736. The cost is that an unseparated range written 3000-5000 keeps
+    both numbers bare, which is a smaller wrong than a mangled phone number.
     """
     if not text:
         return text
@@ -1114,7 +1130,7 @@ def group_thousands(text):
             return digits
         return format(value, ',')
 
-    return re.sub(r'\d{4,}', repl, text)
+    return _GROUPABLE.sub(repl, text)
 
 
 # Tags moved to PHOTO_TAGS / DRAWING_TAGS beside SOURCES on 22 August 2026 and
