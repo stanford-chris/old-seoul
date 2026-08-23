@@ -220,6 +220,50 @@ Translation is done by calling the [`claude` CLI](https://docs.claude.com/en/doc
 (`claude -p`, Haiku model), which returns a compact JSON object with the English
 title and a one-sentence description in British date style.
 
+### 3. Check the English against the Korean (`check_translation`)
+
+Nothing used to. Accuracy rested on instructions inside the translation
+prompts, and everything after them was style: quotes, thousands separators,
+capitalisation. `check_translation` now reads the Korean and the English
+together, on the stronger model, and reports only claims the Korean does not
+support.
+
+It runs **before** the post, because a published post cannot be corrected in
+place: `putRecord` succeeds and the appview goes on serving the old text, so
+fixing a live caption means a new record and a deleted one, at the cost of the
+permalink. A check that runs afterwards can only ever report.
+
+What counts as a problem is narrow, and what does not is spelled out at
+length, because a checker that flags wording it would have chosen differently
+costs good posts:
+
+- a statement the Korean does not support, or contradicts
+- a name, place, institution, number or date rendered wrongly
+- a detail kept without the fact that explains it, so the English leaves a
+  season or a figure standing there unexplained
+- **not** anything merely left out: both lines are capped at 60 and 100
+  characters and dropping material is expected
+- **not** style, length, romanisation, or anything about the picture, which
+  nobody in this chain has seen
+
+The prompt also tells the checker what kind of English it is reading, because
+otherwise it is wrong in both directions at once: a glass plate's description
+is empty by design, and a municipal notice is a summary that is *supposed* to
+leave things out.
+
+On a flag: retranslate once, then drop the description, or drop the item
+entirely if the title is what failed. A dropped item is not marked posted, so
+it comes round again another day for another reading.
+
+`stray_years` is the deterministic half and needs no model: a year in the
+English that is nowhere in the record was invented. Years only — Korean counts
+in units of 만 and 억, so a digit-for-digit test on quantities reads a correct
+expansion of 300만원 as three million invented won.
+
+Every verdict is logged to `translation_checks.jsonl`, **including the drafts
+it rejected**. Those never reach the feed, so the log is the only place a
+false alarm can ever be seen.
+
 ## Requirements
 
 - Python 3.9+
@@ -264,6 +308,7 @@ python3 seoul_post.py                     # translate, format and post one item
 python3 seoul_post.py --dry-run           # translate and format without posting
 python3 seoul_post.py --source dryplate   # restrict the pool to one source
 python3 seoul_post.py --tail 10           # show recent alt text, post nothing
+python3 seoul_post.py --checks 20         # show recent translation checks
 ```
 
 ## Data files
@@ -278,6 +323,8 @@ All live alongside the scripts and are gitignored:
   recent successful post, and the recent topic emojis driving the cooldown.
 - `alt_history.jsonl` — one line per posted item, recording the alt text that
   shipped and whether it was generated or fell back to a citation.
+- `translation_checks.jsonl` — one line per translation checked, the rejected
+  drafts included. Read it with `--checks`.
 
 ## Scheduling
 
