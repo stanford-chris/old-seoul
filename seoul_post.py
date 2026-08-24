@@ -45,6 +45,12 @@ import net_guard
 ARCHIVE = Path(__file__).parent / 'seoul_archive.json'
 DRYPLATE = Path(__file__).parent / 'seoul_dryplate.json'
 GAZETTE = Path(__file__).parent / 'seoul_gazette.json'
+GONGU = Path(__file__).parent / 'seoul_gongu.json'
+
+# Sent with every image fetch. See fetch_image: 공유마당 refuses curl's default
+# agent with a bare 400.
+USER_AGENT = ('Old-Seoul-Bot/1.0 (personal project; '
+              'contact: https://chris-stanford.com)')
 # One JSONL line per posted item, recording the alt text that shipped and
 # whether it was generated or fell back. Written only on a real post, and
 # best-effort: see alt_log.
@@ -93,7 +99,7 @@ GAZETTE_SLOTS = {
     '광고': {'label': 'Advertisement', 'kind': 'notice'},
 }
 
-# The three pools. They are posted from a single combined pool, so each
+# The four pools. They are posted from a single combined pool, so each
 # source's share of the feed is just its share of the unposted items.
 #
 # `dated`: the Seoul Metropolitan Archives records carry a usable year, so their
@@ -159,6 +165,31 @@ SOURCES = {
         # two a day. At 1 in 10 it is one every five days and the set lasts
         # about two and a half years. See draw_weights.
         'share': 0.10,
+    },
+    'gongu': {
+        'path': GONGU,
+        # 공공누리 제1유형 (출처표시), checked per item at harvest, so the credit
+        # is mandatory here exactly as it is for the glass plates.
+        'link_label': '🗃️ Korea Policy Broadcasting (KTV)',
+        # Each record carries its own 공유마당 view URL: there is no id-only form.
+        'item_url': None,
+        'alt_tail': 'Korea Policy Broadcasting (KTV)',
+        'alt_credit': '한국정책방송원 (KTV)',
+        # Every record carries an exact 창작년도, down to the day.
+        'dated': True,
+        'tags': PHOTO_TAGS,
+        # Target share of the feed, and the reason this pool was added at all.
+        # The archives pool IS the bot's bulk and 63% of it is officials at
+        # ceremonies (measured 24 August 2026: eight of its twenty commonest
+        # keywords are the names of Seoul mayors). Of these, 10% are. Left
+        # unweighted, 330 items against 10,956 would surface about once a
+        # fortnight and change nothing a reader would notice.
+        #
+        # At 0.20 it is roughly one post in five, so one every two and a half
+        # days at two a day, and the set lasts something over two years. That
+        # is the one number to move if the balance feels wrong: raise it for
+        # more street, lower it to make the set last longer. See draw_weights.
+        'share': 0.20,
     },
 }
 
@@ -1581,9 +1612,19 @@ def fetch_image(url):
     `-f` makes curl exit non-zero on an HTTP error. The magic-byte check covers
     what `-f` cannot: a 200 carrying a placeholder, a login page or an error
     body. Neither guard alone is enough.
+
+    ⚠️ **The User-Agent is required, not decoration.** 공유마당 answers curl's
+    own default agent with HTTP 400 and no explanation, so every image in the
+    KTV pool failed to fetch on the first dry run while the harvest looked
+    perfect: the pool was full and not one item could be posted. It is a
+    truthful bot agent rather than a browser string because that is what the
+    host actually objects to -- a literal `curl/8.7.1` is refused and
+    `Old-Seoul-Bot/1.0` is served, so there is no need to claim to be Safari.
+    The other three hosts are indifferent to it.
     """
     result = subprocess.run(
-        ['curl', '-fsSL', '--max-time', '30', '-o', '-', url],
+        ['curl', '-fsSL', '--max-time', '30', '-H', f'User-Agent: {USER_AGENT}',
+         '-o', '-', url],
         capture_output=True
     )
     if result.returncode != 0:

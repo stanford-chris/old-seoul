@@ -3,6 +3,7 @@
 seoul_archive.json
 seoul_dryplate.json
 seoul_gazette.json
+seoul_gongu.json
 
 # Runtime state (last-success timestamp)
 seoul_state.json

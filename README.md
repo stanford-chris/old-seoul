@@ -1,8 +1,8 @@
 # Old Seoul
 
 A Bluesky bot that posts historical images of Seoul: municipal photographs,
-colonial-era glass plates, and the cartoons from the city's own 1980s
-newspaper. It runs as
+colonial-era glass plates, mid-century news photography, and the cartoons from
+the city's own 1980s newspaper. It runs as
 [@oldhanyang.bsky.social](https://bsky.app/profile/oldhanyang.bsky.social).
 
 Each post pairs the image with a bilingual caption: an English translation
@@ -20,6 +20,16 @@ pool it came from.
 | `seoul_archive.json` | [Seoul Metropolitan Archives](https://archives.seoul.go.kr) | 1950s-90s municipal photography | ~9,500 |
 | `seoul_dryplate.json` | [National Museum of Korea](https://www.museum.go.kr/dryplate/main.do), Government-General glass plates | 1909-1945 | 1,452 |
 | `seoul_gazette.json` | [Seoul Metropolitan Archives](https://archives.seoul.go.kr/newspaper), 서울시보 cartoons and adverts | 1982-83 | 169 of 2,573 |
+| `seoul_gongu.json` | [한국정책방송원 KTV](https://gongu.copyright.or.kr), via 공유마당 | 1950s-70s news photography | 333 |
+
+⚠️ **The KTV pool's share is set for a different reason: what it is FOR.** The
+archives pool is the bot's bulk and 63 percent of it is officials at ceremonies
+(measured 24 August 2026: eight of its twenty commonest keywords are the names of
+Seoul mayors). Of the KTV photographs, 10 percent are. Left unweighted, 333 items
+against 10,956 would surface about once a fortnight and change nothing a reader
+would notice, so `SOURCES['gongu']['share'] = 0.20` makes it one post in five:
+one every two and a half days, and the set lasts something over two years. That
+is the number to move if the balance feels wrong.
 
 ⚠️ **The gazette's share of the feed is set, not left to its size.** Unweighted,
 169 items against 10,956 photographs surfaces one about every month.
