@@ -12,7 +12,7 @@ caption's framing and the bot's bio make clear.
 
 ## Sources
 
-Three pools, posted from as one. Each item's format, tags and credit follow the
+Four pools, posted from as one. Each item's format, tags and credit follow the
 pool it came from.
 
 | Pool | Source | Period | Postable |
@@ -348,6 +348,10 @@ All live alongside the scripts and are gitignored:
   `seoul_harvest.py`; each item is flagged `posted` once used.
 - `seoul_dryplate.json` — the glass-plate pool. Built by
   `seoul_dryplate_harvest.py`; flagged `posted` the same way.
+- `seoul_gazette.json` — the 1982-83 서울시보 pool. Built by
+  `seoul_gazette_harvest.py`; only its cartoons and adverts are postable.
+- `seoul_gongu.json` — the KTV news-photography pool. Built by
+  `seoul_gongu_harvest.py`; flagged `posted` the same way.
 - `seoul_state.json` — records `last_success_at`, the timestamp of the most
   recent successful post, and the recent topic emojis driving the cooldown.
 - `alt_history.jsonl` — one line per posted item, recording the alt text that
