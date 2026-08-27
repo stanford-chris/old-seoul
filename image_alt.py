@@ -292,6 +292,14 @@ def _unsupported(image_bytes, text, *, env, model, timeout, suffix, log):
     list of ABSENT lines, which reads exactly like a clean verification: the
     dangerous state and the healthy one producing identical silence.
     """
+    # ⚠️ Unlike _generate() below, this does NOT wait out a spent quota through
+    # limit_guard, and the asymmetry is deliberate. A description is worth a
+    # short wait because the alternative is a bare citation; a VERIFICATION is
+    # not, because the alternative is the description shipping unverified,
+    # which is a good outcome held an hour late. The cost is that a quota
+    # exhausted mid-run puts every description through unchecked — logged each
+    # time, never silent, but worth knowing before reading a quiet log as a
+    # clean bill of health.
     try:
         with tempfile.TemporaryDirectory() as td:
             name = f'image{suffix}'
