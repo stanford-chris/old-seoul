@@ -22,6 +22,9 @@ a leaked aside nobody would ever see what was lost.
 """
 
 import unittest
+import unittest.mock
+import types
+import subprocess
 
 import image_alt
 
@@ -96,6 +99,153 @@ class LeavesRealDescriptionsAlone(unittest.TestCase):
                          'giving alt text. Let me know if you want another.')
         self.assertLess(len(out), image_alt.MIN_CHARS)
 
+
+class FakeRun:
+    """Stands in for subprocess.run, answering by what the prompt asks for.
+
+    Keyed on the prompt rather than on call order, so the stub cannot decide
+    what the code under test sees: a change in the number of calls shows up as
+    a wrong answer rather than being silently absorbed.
+    """
+
+    def __init__(self, describe_replies, verify_replies):
+        self.describe_replies = list(describe_replies)
+        self.verify_replies = list(verify_replies)
+        self.prompts = []
+
+    def __call__(self, argv, **kw):
+        prompt = argv[-1]
+        self.prompts.append(prompt)
+        pool = (self.verify_replies if prompt.startswith('Look at the image')
+                else self.describe_replies)
+        reply = pool.pop(0)
+        if isinstance(reply, Exception):
+            raise reply
+        rc, out = reply
+        return types.SimpleNamespace(returncode=rc, stdout=out, stderr='')
+
+    @property
+    def verify_prompts(self):
+        return [p for p in self.prompts if p.startswith('Look at the image')]
+
+    @property
+    def describe_prompts(self):
+        return [p for p in self.prompts if not p.startswith('Look at the image')]
+
+
+GOOD = ('Black-and-white photograph of a snow-covered wooden hall '
+        'behind a bare tree.')
+WORSE = ('Black-and-white photograph of a snow-covered wooden hall behind '
+         'a bare tree, with a small figure walking in front.')
+ALL_FOUND = 'FOUND | wooden hall | centre\nFOUND | bare tree | foreground'
+ONE_ABSENT = ('FOUND | wooden hall | centre\n'
+              'ABSENT | a small figure walking | it is the trunk of the tree')
+
+
+class Unsupported(unittest.TestCase):
+    """The verifier's three answers: clean, faulty, and could-not-tell.
+
+    The third is the one that matters. A failed call yields no ABSENT lines,
+    which is byte-identical to a clean check unless something insists on the
+    difference — the same shape as portfolio_brief.py publishing "$0.00" over
+    a good note because a denied read came back as an empty list.
+    """
+
+    def call(self, reply):
+        fake = FakeRun([], [reply])
+        with unittest.mock.patch.object(image_alt.subprocess, 'run', fake):
+            return image_alt._unsupported(
+                b'jpegbytes', GOOD, env=None, model='m', timeout=1,
+                suffix='.jpg', log=lambda *_: None)
+
+    def test_all_found_is_clean(self):
+        self.assertEqual(self.call((0, ALL_FOUND)), [])
+
+    def test_absent_lines_are_returned(self):
+        self.assertEqual(self.call((0, ONE_ABSENT)), ['a small figure walking'])
+
+    def test_a_reply_with_no_verdicts_is_not_a_pass(self):
+        # The whole point. "Sure, that looks accurate to me!" carries no
+        # ABSENT lines and must not read as a clean verification.
+        self.assertIsNone(self.call((0, 'Sure, that looks accurate to me!')))
+
+    def test_empty_reply_is_not_a_pass(self):
+        self.assertIsNone(self.call((0, '')))
+
+    def test_nonzero_exit_is_not_a_pass(self):
+        self.assertIsNone(self.call((1, 'error: overloaded')))
+
+    def test_timeout_is_not_a_pass(self):
+        self.assertIsNone(self.call(
+            subprocess.TimeoutExpired(cmd='claude', timeout=1)))
+
+
+class DescribeVerification(unittest.TestCase):
+    """describe() around the check: ship, retry, drop, or ship unverified."""
+
+    def run_describe(self, describe_replies, verify_replies, **kw):
+        fake = FakeRun(describe_replies, verify_replies)
+        with unittest.mock.patch.object(image_alt.subprocess, 'run', fake):
+            out = image_alt.describe(b'jpegbytes', context='a caption',
+                                     log=lambda *_: None, **kw)
+        return out, fake
+
+    def test_a_verified_description_ships_unchanged(self):
+        out, fake = self.run_describe([(0, GOOD)], [(0, ALL_FOUND)])
+        self.assertEqual(out, GOOD)
+        self.assertEqual(len(fake.verify_prompts), 1)
+
+    def test_a_failed_check_regenerates_once_and_ships_the_retry(self):
+        out, fake = self.run_describe(
+            [(0, WORSE), (0, GOOD)], [(0, ONE_ABSENT), (0, ALL_FOUND)])
+        self.assertEqual(out, GOOD)
+        self.assertEqual(len(fake.describe_prompts), 2)
+
+    def test_the_retry_names_what_failed(self):
+        _, fake = self.run_describe(
+            [(0, WORSE), (0, GOOD)], [(0, ONE_ABSENT), (0, ALL_FOUND)])
+        self.assertIn('a small figure walking', fake.describe_prompts[1])
+
+    def test_two_failures_drop_the_description(self):
+        # The caller falls back to its citation. A plain attribution beats a
+        # confident sentence about someone who is not in the photograph.
+        out, fake = self.run_describe(
+            [(0, WORSE), (0, WORSE)], [(0, ONE_ABSENT), (0, ONE_ABSENT)])
+        self.assertIsNone(out)
+        self.assertEqual(len(fake.describe_prompts), 2)
+
+    def test_an_unmakeable_check_ships_the_description(self):
+        # Never the thing that ends a run: a verifier having a bad morning
+        # must not strip descriptions off every post.
+        out, _ = self.run_describe([(0, GOOD)], [(1, 'overloaded')])
+        self.assertEqual(out, GOOD)
+
+    def test_an_unmakeable_check_says_so(self):
+        lines = []
+        fake = FakeRun([(0, GOOD)], [(1, 'overloaded')])
+        with unittest.mock.patch.object(image_alt.subprocess, 'run', fake):
+            image_alt.describe(b'jpegbytes', log=lines.append)
+        self.assertTrue(any('UNVERIFIED' in ln for ln in lines), lines)
+
+    def test_verify_false_makes_no_check_at_all(self):
+        out, fake = self.run_describe([(0, GOOD)], [], verify=False)
+        self.assertEqual(out, GOOD)
+        self.assertEqual(fake.verify_prompts, [])
+
+    def test_the_verifier_is_never_given_the_caption(self):
+        # The caption is where imported facts come from. A verifier holding it
+        # will confirm them, which is the failure this check exists to catch.
+        _, fake = self.run_describe([(0, GOOD)], [(0, ALL_FOUND)])
+        self.assertNotIn('a caption', fake.verify_prompts[0])
+
+    def test_the_verifier_is_given_the_description(self):
+        _, fake = self.run_describe([(0, GOOD)], [(0, ALL_FOUND)])
+        self.assertIn(GOOD, fake.verify_prompts[0])
+
+    def test_a_failed_generation_never_reaches_the_check(self):
+        out, fake = self.run_describe([(1, 'boom')], [])
+        self.assertIsNone(out)
+        self.assertEqual(fake.verify_prompts, [])
 
 if __name__ == '__main__':
     unittest.main()
