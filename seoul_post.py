@@ -504,6 +504,12 @@ def item_district(item):
     return DISTRICTS_EN.get(parts[2], '') if len(parts) > 2 else ''
 
 
+# Spelling is American, dates stay British (CLAUDE.md, 28 August 2026): the
+# house style narrowed "British style" to date format alone, so American
+# spelling is now the default everywhere except everylibrary and Holmes,
+# whose subject matter is itself British. Old Seoul's subject is Korean, so
+# it takes the default. All three rule blocks below (translate,
+# translate_title_only, _GAZETTE_HOUSE_RULES) changed together on that date.
 def translate(title_ko, description_ko, year):
     """Translate Korean title and description to concise English via claude -p.
 
@@ -525,7 +531,7 @@ def translate(title_ko, description_ko, year):
         f'- If the Korean gives a REASON, a purpose or a cause, keep it. A circumstance kept without its reason reads as a non-sequitur: "targeted bad drinks during monsoon season" drops the epidemic control that put the season there, and leaves a reader wondering what the rain had to do with it\n'
         f'- Do not strengthen a verb. 단속 is a crackdown, not a seizure; 시찰 is an inspection, not a raid. Say what the Korean says happened, not what you suppose followed from it\n'
         f'- Do not add interpretation or extra context\n'
-        f'- UK English spelling: modernisation not modernization, harbour not harbor, centre not center\n'
+        f'- American English spelling: modernization not modernisation, harbor not harbour, center not centre\n'
         f'- Write "percent" as one word, never "per cent"\n'
         f'- NO serial comma: "drinks, ices and meat", never "drinks, ices, and meat"\n'
         f'- Quote with double quotation marks, never single ones — a "comfort women" camp, not a \'comfort women\' camp\n'
@@ -552,7 +558,7 @@ def translate_title_only(title_ko):
         f'- These are catalogue entries for buildings, monuments and sites. '
         f'Keep Korean proper nouns in Revised Romanisation (Gyeongbokgung, '
         f'Donhwamun), and translate the architectural terms that follow them\n'
-        f'- UK English spelling: harbour not harbor, centre not center\n'
+        f'- American English spelling: harbor not harbour, center not centre\n'
         f'- Quote with double quotation marks, never single ones\n'
         f'- Do not add interpretation, context or anything not in the Korean\n'
         f'- Return JSON only: {{"title": "..."}}'
@@ -618,8 +624,8 @@ _GAZETTE_HOUSE_RULES = (
     '- Sentence case, NOT Title Case: capitalise the first word and proper '
     'nouns only. "Family motto calligraphy contest", not "Family Motto '
     'Calligraphy Contest"\n'
-    '- UK English spelling: modernisation not modernization, harbour not '
-    'harbor, centre not center\n'
+    '- American English spelling: modernization not modernisation, harbor '
+    'not harbour, center not centre\n'
     '- Write "percent" as one word, never "per cent"\n'
     '- NO serial comma: "drinks, ices and meat", never "drinks, ices, and meat"\n'
     '- Quote with double quotation marks, never single ones\n'

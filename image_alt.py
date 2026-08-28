@@ -67,6 +67,9 @@ MIN_CHARS = 20
 # claim in the opposite direction.
 DISCLOSURE = 'A.I.-generated description:'
 
+# American spelling below matches the house-style default (CLAUDE.md, 28
+# August 2026): this bot's subject is Korean, not British, so it takes the
+# default rather than the everylibrary/Holmes exception for British subjects.
 _PROMPT = """Write alt text for a blind reader of a social media post, describing the image ./{name}
 
 Describe what is actually VISIBLE: the subject, the setting, the composition, any notable detail. One or two sentences, 40 words at most.
@@ -80,7 +83,7 @@ Rules:
 - Do not give a number unless you have counted it. "Several people look on" beats "five other men look on" when you have not counted five, and the same goes for windows, storeys, doors and lawns.
 - Open by naming the medium where it is not obvious, e.g. "Black-and-white photograph" or "Pen-and-ink illustration".
 - Do not restate the caption below. It is read out separately, and repeating it is the flaw this replaces. Use it only to avoid contradicting what is known.
-- UK English. No emoji, no markdown, no surrounding quotation marks.
+- American English. No emoji, no markdown, no surrounding quotation marks.
 - If the image cannot be read at all, reply with exactly CANNOT_SEE.
 - Return ONLY the alt text and nothing else.
 
