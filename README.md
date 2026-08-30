@@ -237,6 +237,22 @@ reader wondering what the rain had to do with it. And it **does not strengthen
 a verb**: 단속 is a crackdown, not a seizure. The photographs are not a licence
 for either, since the caption is made from the text.
 
+### 2b. Describe the image (`image_alt.py`)
+
+Alt text is generated separately from the caption, by a second model call
+(`describe()`) shown only the image's pixels — never the caption, so it
+cannot paraphrase provenance instead of describing what is actually visible.
+Since 27 August 2026 the description is checked against the image before it
+ships: a further call locates every concrete claim in the description and
+flags anything it cannot find; on a failure the description is retried once,
+naming what could not be verified, and a second failure drops it. Any
+failure along the way — generation, verification, a spent quota — falls
+back to a plain citation-only alt rather than holding the post, on the
+principle that a missing description is not worth a missing post. A
+generated description is prefixed `A.I.-generated description:`
+(`image_alt.DISCLOSURE`); the citation fallback is not, since it is
+catalogue metadata rather than a model's claim.
+
 ### 3. Check the English against the Korean (`check_translation`)
 
 Nothing used to. Accuracy rested on instructions inside the translation
