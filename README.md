@@ -22,22 +22,15 @@ pool it came from.
 | `seoul_gazette.json` | [Seoul Metropolitan Archives](https://archives.seoul.go.kr/newspaper), 서울시보 cartoons and adverts | 1982-83 | 169 of 2,573 |
 | `seoul_gongu.json` | [한국정책방송원 KTV](https://gongu.copyright.or.kr), via 공유마당 | 1950s-70s news photography | 333 |
 
-⚠️ **The KTV pool's share is set for a different reason: what it is FOR.** The
-archives pool is the bot's bulk and 63 percent of it is officials at ceremonies
-(measured 24 August 2026: eight of its twenty commonest keywords are the names of
-Seoul mayors). Of the KTV photographs, 10 percent are. Left unweighted, 333 items
-against 10,956 would surface about once a fortnight and change nothing a reader
-would notice, so `SOURCES['gongu']['share'] = 0.20` makes it one post in five:
-one every two and a half days, and the set lasts something over two years. That
-is the number to move if the balance feels wrong.
-
-⚠️ **The gazette's share of the feed is set, not left to its size.** Unweighted,
-169 items against 10,956 photographs surfaces one about every month.
-`SOURCES['gazette']['share'] = 0.10` makes it 1 post in 10: one every five days,
-and about two and a half years of them. The photo pools keep their relative standing exactly, splitting the other
-90% in proportion to their own sizes, which is what the unweighted draw already
-did. See `draw_weights`, which also covers the gazette being absent, being the
-only source (`--source gazette`), and shares misconfigured past 1.
+⚠️ **KTV and gazette shares are configured, not left to pool size.** Both pull
+down the archive pool's officials-at-ceremonies bias, so an unweighted draw
+would surface each too rarely to matter. `SOURCES['gongu']['share'] = 0.20`
+puts KTV in one post in five (~2.5 days apart, lasting ~2 years);
+`SOURCES['gazette']['share'] = 0.10` puts the gazette in one in ten (~5 days
+apart, ~2.5 years). The two photo pools split the remaining share in
+proportion to their own sizes. See `draw_weights`, which also covers the
+gazette being absent, being the only source (`--source gazette`), and shares
+misconfigured past 1.
 
 The archive records carry a year and a Korean description, so their posts lead
 with the date. The glass plates are catalogue entries: title, subject path and
@@ -230,12 +223,10 @@ Translation is done by calling the [`claude` CLI](https://docs.claude.com/en/doc
 (`claude -p`, Haiku model), which returns a compact JSON object with the English
 title and a one-sentence description in British date style.
 
-Two of the prompt's rules exist because of one post. A description **keeps a
-reason the Korean gives**: a crackdown described as happening "during monsoon
-season", with the epidemic control that put the season there dropped, leaves a
-reader wondering what the rain had to do with it. And it **does not strengthen
-a verb**: 단속 is a crackdown, not a seizure. The photographs are not a licence
-for either, since the caption is made from the text.
+Two rules in the prompt: a description **keeps a reason the Korean gives**
+(dropping the cause behind an effect reads as a non sequitur), and it **does
+not strengthen a verb** (단속 is a crackdown, not a seizure). The photograph is
+not a licence for either — the caption is made from the text.
 
 ### 2b. Describe the image (`image_alt.py`)
 
@@ -308,6 +299,27 @@ separately, a retry that then passed is not a finding at all, and the case
 worth having most is the check that could not *run*: posts keep going out when
 it fails, so a checker broken for a week looks exactly like a quiet week.
 Nothing here depends on it: with no `observe.py` the bot runs unchanged.
+
+## Reliability
+
+Three small modules guard the run itself, separate from the posting logic:
+
+- **`net_guard.py`** — `wait_for_network()` checks for a working network path
+  before the run starts (a routeless-but-associated Wi-Fi state that ping and
+  a cached DNS answer can both still look healthy through). No path out backs
+  off and retries up to a budget; missing the budget exits 0 with one log
+  line rather than a traceback mid-run.
+- **`limit_guard.py`** — waits out a spent `claude -p` usage-limit reply
+  instead of losing the run to it, since the refusal names the moment it
+  clears. Anything that isn't a usage limit (an expired token, say) still
+  raises, so a real fault is never mistaken for a quota wait.
+- **`alt_log.py`** — appends the alt text each post shipped, and whether it
+  was model-generated or fell back to a citation, to `alt_history.jsonl`.
+  Best-effort: a logging failure is warned about, never raised.
+
+Both guards exit 0 on a skipped run rather than failing loudly, which is only
+safe because something outside this repo (`bot_health_check.py`) alerts when
+the bot itself has gone quiet.
 
 ## Requirements
 
