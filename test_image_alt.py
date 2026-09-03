@@ -247,5 +247,22 @@ class DescribeVerification(unittest.TestCase):
         self.assertIsNone(out)
         self.assertEqual(fake.verify_prompts, [])
 
+    def test_a_timeout_retries_once_and_ships_the_retry(self):
+        # A verification failure already got one retry; a raw call failure
+        # did not, so a single transient timeout dropped the description
+        # outright. This is the fix: one retry, same as the check gets.
+        out, fake = self.run_describe(
+            [subprocess.TimeoutExpired(cmd='claude', timeout=1), (0, GOOD)],
+            [(0, ALL_FOUND)])
+        self.assertEqual(out, GOOD)
+        self.assertEqual(len(fake.describe_prompts), 2)
+
+    def test_two_timeouts_give_up(self):
+        out, fake = self.run_describe(
+            [subprocess.TimeoutExpired(cmd='claude', timeout=1),
+             subprocess.TimeoutExpired(cmd='claude', timeout=1)], [])
+        self.assertIsNone(out)
+        self.assertEqual(fake.verify_prompts, [])
+
 if __name__ == '__main__':
     unittest.main()

@@ -332,6 +332,7 @@ def _unsupported(image_bytes, text, *, env, model, timeout, suffix, log):
 def _generate(image_bytes, prompt, *, env, model, timeout, suffix, log):
     """One generation attempt: the model's reply, cleaned, or None."""
     global _limit_waited
+    retried = False
     while True:
         try:
             with tempfile.TemporaryDirectory() as td:
@@ -343,6 +344,14 @@ def _generate(image_bytes, prompt, *, env, model, timeout, suffix, log):
                     timeout=timeout)
         except (subprocess.TimeoutExpired, OSError) as exc:
             log(f'  (image description unavailable: {exc.__class__.__name__})')
+            # A verification failure already gets one retry, below. A raw
+            # call failure did not, so a single transient timeout or network
+            # blip was enough to drop the description and ship a bare
+            # citation. One retry here matches the tolerance _unsupported()'s
+            # caller already has, rather than adding a new one.
+            if not retried:
+                retried = True
+                continue
             return None
 
         if r.returncode != 0:
