@@ -10,7 +10,7 @@ Unlike the two photo pools, an item here is a REGION OF A PAGE, not a file of
 its own. Each record therefore carries the page image URL plus the article's
 own coordinates on it; whatever posts these has to crop. In exchange every
 article comes with the archives' own Korean transcription, so there is real
-text to translate instead of a catalogue title alone.
+text to translate instead of a catalog title alone.
 
 Two requests per unit of work, and both are needed:
   - the listing at /newspaper gives 발행번호, date and TITLE, and is the only
@@ -55,7 +55,7 @@ Established by probing on 22 August 2026, each the hard way:
     skip those; treating them as a join failure would throw the article away and
     blame the parse for it.
 
-  - A `poly` region is L-shaped around its neighbours, so its bounding box
+  - A `poly` region is L-shaped around its neighbors, so its bounding box
     contains part of another article. Both `box` and the raw `coords` are kept
     so a consumer can mask rather than crop. 738 of the 2,573 are polys.
 
@@ -379,7 +379,7 @@ def report(merged, fresh, rows, unjoined, duplicates, failed, out_path):
             tags[r["tag"] or "(untagged)"] = tags.get(r["tag"] or "(untagged)", 0) + 1
         print(f"  {dates[0]} to {dates[-1]}")
         print(f"  {polys} poly regions ({polys * 100 // len(fresh)}%) — "
-              f"their boxes overlap neighbours, mask with coords")
+              f"their boxes overlap neighbors, mask with coords")
         if empty:
             print(f"  {empty} with no transcription")
         if boxless:
@@ -414,8 +414,8 @@ def main():
     sys.exit(report(*harvest(out_path, sample), out_path=out_path))
 
 
-# Refuse anything unrecognised before the flags above are read. A bare
-# membership test silently ignores what it does not recognise, so a typo
+# Refuse anything unrecognized before the flags above are read. A bare
+# membership test silently ignores what it does not recognize, so a typo
 # (`--sampel`) or a reflex (`--help`) reads as no flag at all and takes the
 # ordinary path — the trap that published a real seoul-index thread on
 # 20 July 2026, and what harden_audit.sh check 10 looks for.
@@ -434,7 +434,7 @@ if __name__ == "__main__":
                 if a not in _KNOWN_ARGS and j not in _skip]
     if _unknown:
         sys.exit(f'Unknown argument(s): {" ".join(_unknown)}. '
-                 f'Recognised: --sample N, --out PATH. Refusing to run.')
+                 f'Recognized: --sample N, --out PATH. Refusing to run.')
     if "--sample" in sys.argv:
         _i = sys.argv.index("--sample")
         if _i + 1 >= len(sys.argv) or not sys.argv[_i + 1].isdigit():

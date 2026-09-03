@@ -33,12 +33,12 @@ gazette being absent, being the only source (`--source gazette`), and shares
 misconfigured past 1.
 
 The archive records carry a year and a Korean description, so their posts lead
-with the date. The glass plates are catalogue entries: title, subject path and
+with the date. The glass plates are catalog entries: title, subject path and
 place, with no description and a 촬영 연도 on only 284 of the 1,452. Leading with
 a date alone would print "date unknown" on four posts in five, so those posts
 lead with the district and no description is written for them — inventing one
 from a title the model cannot check would be fabrication, not translation. The
-date follows the district: the year where the catalogue has one ("Jongno-gu,
+date follows the district: the year where the catalog has one ("Jongno-gu,
 1946"), and "date unknown" where it does not. The year used to be dropped from
 the header while the alt text still stated it, so the post contradicted its own
 description.
@@ -58,7 +58,7 @@ The bot runs in two stages.
 
 ### 1. Harvest (`seoul_harvest.py`)
 
-A one-off crawler that walks the archive's photo catalogue and builds a local
+A one-off crawler that walks the archive's photo catalog and builds a local
 pool of postable items in `seoul_archive.json`. For each item it records the
 Korean title, year, description, keywords and the full-resolution (2000px)
 image URLs.
@@ -77,7 +77,7 @@ a quick test run.
 
 ### 1b. Harvest the glass plates (`seoul_dryplate_harvest.py`)
 
-Pulls the Seoul subset of the National Museum of Korea's glass-plate catalogue
+Pulls the Seoul subset of the National Museum of Korea's glass-plate catalog
 into `seoul_dryplate.json`: 1,452 records, 146 pages, about three minutes at one
 request per second. It records the Korean and hanja titles, accession number,
 subject path, region, plate size, year and photographer where known.
@@ -103,7 +103,7 @@ articles are not.** An item here is a region of a page rather than a file:
   about 20px of padding recovers it — so pad and clamp rather than cropping the
   raw box.
 - 738 of the 2,573 regions (28%) are `poly` rather than `rect`, wrapped in an L
-  around their neighbours, so their bounding box contains part of another
+  around their neighbors, so their bounding box contains part of another
   article. The raw `coords` are kept so those can be masked instead.
 - Every article has the archives' own Korean transcription in `text`, which is
   real prose to translate rather than a title alone. Two exceptions to expect:
@@ -172,10 +172,10 @@ Three things vary by source rather than globally:
 - **The date.** A gazette record states its exact publication day, so the
   header is that day and the model is never asked to find one.
 
-⚠️ **`translate_gazette` must never describe the artefact.** It is shown the
+⚠️ **`translate_gazette` must never describe the artifact.** It is shown the
 archives' transcription and nothing else. A caption reading `지하철 급진전` invites
 "drawn as a star-shaped crater", which is a fine sentence about a picture the
-model has not seen. The artefact is described by `image_alt.describe()`, which
+model has not seen. The artifact is described by `image_alt.describe()`, which
 is shown the actual pixels — and needs no special case for a notice, returning
 "Newspaper advertisement in Korean, dense vertical columns of text under a bold
 headline", which complements the caption instead of repeating it.
@@ -197,7 +197,7 @@ the alt text, so alt matches the caption: `reading “서울특별시”`, not
 `reading '서울특별시'`. Applied to the description alone, not to the assembled
 string — the provenance lead and the disclosure are ours and carry no marks.
 Note this also promotes a matched pair of single quotes to double, which is
-house style but is a behaviour change and not only a character swap.
+house style but is a behavior change and not only a character swap.
 
 **A signed drawing credits its artist**: `✏️ 정운경` sits above the source
 credit. ⚠️ The name comes from the record's OWN title, never from the slot.
@@ -226,7 +226,7 @@ title and a one-sentence description in British date style.
 Two rules in the prompt: a description **keeps a reason the Korean gives**
 (dropping the cause behind an effect reads as a non sequitur), and it **does
 not strengthen a verb** (단속 is a crackdown, not a seizure). The photograph is
-not a licence for either — the caption is made from the text.
+not a license for either — the caption is made from the text.
 
 ### 2b. Describe the image (`image_alt.py`)
 
@@ -242,7 +242,7 @@ back to a plain citation-only alt rather than holding the post, on the
 principle that a missing description is not worth a missing post. A
 generated description is prefixed `A.I.-generated description:`
 (`image_alt.DISCLOSURE`); the citation fallback is not, since it is
-catalogue metadata rather than a model's claim.
+catalog metadata rather than a model's claim.
 
 ### 3. Check the English against the Korean (`check_translation`)
 
@@ -270,7 +270,7 @@ costs good posts:
   it, because the caption is made from the text
 - **not** anything merely left out: both lines are capped at 60 and 100
   characters and dropping material is expected
-- **not** style, length, romanisation, or anything about the picture, which
+- **not** style, length, romanization, or anything about the picture, which
   nobody in this chain has seen
 
 The prompt also tells the checker what kind of English it is reading, because
@@ -401,7 +401,7 @@ since the last crawl.
 ## Source material and attribution
 
 Every post links back to its original item, and English captions are
-AI-generated and labelled as such.
+AI-generated and labeled as such.
 
 **[Seoul Metropolitan Archives](https://archives.seoul.go.kr)** — the harvester
 keeps only items the archive marks as public (`공개`) and unrestricted
@@ -412,7 +412,7 @@ glass plates are published under
 [공공누리 제1유형](https://www.kogl.or.kr) (KOGL Type 1: free use, including
 commercial and derivative use, on the single condition of attribution). The
 museum credit in the caption and in every image's alt text is that attribution,
-so it is a licence term rather than a courtesy and must not be dropped.
+so it is a license term rather than a courtesy and must not be dropped.
 
 A note on what these photographs are: the glass plates were made from 1909 to
 about 1945 by the Japanese Government-General's survey of Korean antiquities,

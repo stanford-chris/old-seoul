@@ -63,7 +63,7 @@ MIN_CHARS = 20
 #
 # Callers must apply it ONLY to generated text. Every caller here also has an
 # attribution-only fallback for when describe() returns None, and that string
-# is catalogue metadata written by a human. Labelling it would be a false
+# is catalog metadata written by a human. Labeling it would be a false
 # claim in the opposite direction.
 DISCLOSURE = 'A.I.-generated description:'
 
@@ -213,7 +213,7 @@ def _strip_meta(text, log=print):
 # ⚠️ It runs INSIDE describe(), on the bare description. Callers prepend the
 # citation ("Seoul Metropolitan Archives, 1965.") and everylibrary appends a
 # note from Commons, and both assert things no image can show — an archive's
-# name, a date, "the council contact centre out the back". Verifying the
+# name, a date, "the council contact center out the back". Verifying the
 # assembled alt reports every one of those as unsupported. The sweep that led
 # to this made exactly that mistake and scored three human-written claims as
 # model hallucinations before they were caught by hand.
@@ -238,7 +238,7 @@ def _strip_meta(text, log=print):
 #
 # So this check is worth having and is NOT a solution to the general problem.
 # It catches the large classes measured in the same sweep — miscounted people
-# and storeys, wrong roofs, wrong colours, a canopy borrowed from a bus
+# and storeys, wrong roofs, wrong colors, a canopy borrowed from a bus
 # shelter next door — and it does not catch a small, low-contrast feature that
 # genuinely looks like the thing it is mistaken for. The 30% figure above is
 # therefore a FLOOR, not a measurement of everything wrong: the snow post was

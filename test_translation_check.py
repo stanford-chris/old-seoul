@@ -155,7 +155,7 @@ class Verdicts(unittest.TestCase):
 class Observations(unittest.TestCase):
     """What the Sunday estate review is told. The mapping is the thing worth
     testing: an action nobody mapped goes unobserved in silence, which is the
-    right behaviour at run time and a bug to be caught here."""
+    right behavior at run time and a bug to be caught here."""
 
     def setUp(self):
         self.calls = []

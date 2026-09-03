@@ -182,8 +182,8 @@ def main():
     print(f'\nDone. Archive: {len(items_by_id)} items, {postable} postable.')
 
 
-# Refuse anything unrecognised before the flags below are read. Bare membership
-# tests silently ignore what they do not recognise, so a typo (`--sampel`) or a
+# Refuse anything unrecognized before the flags below are read. Bare membership
+# tests silently ignore what they do not recognize, so a typo (`--sampel`) or a
 # reflex (`--help`) reads as no flag at all and takes the ordinary path.
 # seoul-index published a real thread that way on 20 July 2026. The posting
 # bots in these repos were given this guard then; the harvest scripts were not,
@@ -203,6 +203,6 @@ if __name__ == '__main__':
                 if a not in _KNOWN_ARGS and j not in _skip]
     if _unknown:
         sys.exit(f'Unknown argument(s): {" ".join(_unknown)}. '
-                 f'Recognised: {" ".join(sorted(_KNOWN_ARGS))} [N]. '
+                 f'Recognized: {" ".join(sorted(_KNOWN_ARGS))} [N]. '
                  f'Refusing to run.')
     main()

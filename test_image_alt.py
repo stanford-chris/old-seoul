@@ -137,8 +137,8 @@ GOOD = ('Black-and-white photograph of a snow-covered wooden hall '
         'behind a bare tree.')
 WORSE = ('Black-and-white photograph of a snow-covered wooden hall behind '
          'a bare tree, with a small figure walking in front.')
-ALL_FOUND = 'FOUND | wooden hall | centre\nFOUND | bare tree | foreground'
-ONE_ABSENT = ('FOUND | wooden hall | centre\n'
+ALL_FOUND = 'FOUND | wooden hall | center\nFOUND | bare tree | foreground'
+ONE_ABSENT = ('FOUND | wooden hall | center\n'
               'ABSENT | a small figure walking | it is the trunk of the tree')
 
 

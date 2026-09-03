@@ -107,7 +107,7 @@ GAZETTE_SLOTS = {
 # 촬영 연도 at all — so a date alone would be "date unknown" four posts in five.
 # Those posts lead with the district, which is real information the header never
 # carried (the whole feed is Seoul, so the city alone said nothing; see the
-# 2026-07-26 header change), and follow it with the year or, where the catalogue
+# 2026-07-26 header change), and follow it with the year or, where the catalog
 # has none, "date unknown". See post_header.
 SOURCES = {
     'archives': {
@@ -346,7 +346,7 @@ def item_id(item):
 def item_desc(item):
     """Korean description, or '' where the source records none.
 
-    The glass plates have no description field at all: the catalogue gives a
+    The glass plates have no description field at all: the catalog gives a
     title, a subject path and a place, and nothing prose-like. That empty string
     is load-bearing — translate() must not be asked to write a description from
     nothing, or it invents one.
@@ -544,19 +544,19 @@ def translate(title_ko, description_ko, year):
 
 
 def translate_title_only(title_ko):
-    """Translate a bare catalogue title, with no description invented.
+    """Translate a bare catalog title, with no description invented.
 
-    The glass-plate titles are museum catalogue entries ('창덕궁 돈화문 공포'), so
+    The glass-plate titles are museum catalog entries ('창덕궁 돈화문 공포'), so
     the job is a faithful rendering of a named structure, not prose.
     """
     prompt = (
-        f'Translate this Korean title from a museum catalogue of historical '
+        f'Translate this Korean title from a museum catalog of historical '
         f'Seoul photographs into concise English.\n\n'
         f'Title (Korean): {title_ko}\n\n'
         f'Rules:\n'
         f'- Accurate, natural English, max 60 characters\n'
-        f'- These are catalogue entries for buildings, monuments and sites. '
-        f'Keep Korean proper nouns in Revised Romanisation (Gyeongbokgung, '
+        f'- These are catalog entries for buildings, monuments and sites. '
+        f'Keep Korean proper nouns in Revised Romanization (Gyeongbokgung, '
         f'Donhwamun), and translate the architectural terms that follow them\n'
         f'- American English spelling: harbor not harbour, center not centre\n'
         f'- Quote with double quotation marks, never single ones\n'
@@ -768,13 +768,13 @@ def _check_mode(item):
             'reads, and that is the one thing to report here.')
     if not item_desc(item):
         return (
-            'This is a museum catalogue entry for a building or a site. It has '
+            'This is a museum catalog entry for a building or a site. It has '
             'no Korean description, so the English description is EMPTY BY '
             'DESIGN and its emptiness is not a fault: writing one would be '
             'invention. Check the title alone, as a rendering of a named '
             'structure.')
     return (
-        "This is an archive photograph and its catalogue description. The "
+        "This is an archive photograph and its catalog description. The "
         'English description should say what the Korean description says, '
         'shorter.')
 
@@ -786,7 +786,7 @@ def _check_prompt(item, title_en, desc_en):
         f'and nothing you write is published.\n\n'
         f'Korean title: {item["title"]}\n'
         f'Korean text: {item_desc(item) or "(none — this record is title-only)"}\n'
-        f'Catalogue year: {item_year(item) or "unknown"}\n\n'
+        f'Catalog year: {item_year(item) or "unknown"}\n\n'
         f'English title: {title_en}\n'
         f'English description: {desc_en or "(none)"}\n\n'
         f'{_check_mode(item)}\n\n'
@@ -809,7 +809,7 @@ def _check_prompt(item, title_en, desc_en):
         f'wording you would have chosen differently\n'
         f'- anything about the photograph or drawing itself: it has not been '
         f'seen by the writer, by you, or by anyone in this chain\n'
-        f'- a romanisation spelled another way than you would spell it\n\n'
+        f'- a romanization spelled another way than you would spell it\n\n'
         f'If you are unsure, PASS it. A false alarm here costs a good post, '
         f'and an English caption that is merely not how you would have put it '
         f'is not a fault.\n'
@@ -843,7 +843,7 @@ def check_translation(item, title_en, desc_en, log=print):
     if stray:
         # Deterministic, so it does not need the model's agreement and does not
         # get a vote from it: a year that is in neither the caption, the
-        # description, the catalogue year nor the record's date was invented.
+        # description, the catalog year nor the record's date was invented.
         return {'title': '', 'error': '',
                 'description': f'states a year the record does not: '
                                f'{", ".join(stray)}'}
@@ -1310,7 +1310,7 @@ SEOUL_EMOJIS = [
       "마을", "동네", "주택", "아파트", "골목"], "🏘️"),
     # NB: bare 문/궁 dropped — 문 buried in 방문/신문/문화 (2,700+ items), 궁 in
     # 궁금. Specific gates and palaces kept.
-    # 궁궐 is the glass-plate catalogue's own term for a palace, and appears in
+    # 궁궐 is the glass-plate catalog's own term for a palace, and appears in
     # its subject path rather than the title; unambiguous, so safe to match.
     (["palace", "fortress", "gate", "landmark", "historic", "heritage",
       "대문", "광화문", "독립문", "성문", "성곽", "문화재",
@@ -1448,7 +1448,7 @@ def desc_restates_title(title_en, desc_en):
     return not fresh
 
 
-# The Government-General museum's plates are catalogued as colonial-era, and
+# The Government-General museum's plates are cataloged as colonial-era, and
 # for all but ten of the 284 with a known year that is exactly what they are.
 # The exceptions are one 1899 plate and nine shot in 1946-49, after liberation.
 # The window opens at 1909, the collection's own earliest year (36 plates) and
@@ -1464,7 +1464,7 @@ def alt_tail(source, item, year_en):
     August 2026 this leads the alt rather than trailing it, so that the
     A.I. disclosure sits next to the generated description alone.
 
-    The period label is dropped when the catalogue's own year contradicts it,
+    The period label is dropped when the catalog's own year contradicts it,
     so a 1946 photograph is no longer read out as colonial-era. A plate with no
     year keeps the label: an undated plate in this collection is a colonial
     plate by every other piece of evidence, and dropping the period there would
@@ -1491,7 +1491,7 @@ def post_header(item, source, date_en=''):
 
     An undated source leads with the district instead. Printing 'date unknown'
     on four posts in five would be a header that never says anything, so the
-    glass plates trade it for the one fact their catalogue does record. Where
+    glass plates trade it for the one fact their catalog does record. Where
     even that is missing (11 of 1,452) the post simply has no header.
 
     'Undated' is the pool's habit, not a property of every plate in it: 284 of
@@ -1896,7 +1896,7 @@ def main():
         # provenance tail trailed it, so a listener heard "A.I.-generated
         # description." as a header over everything that followed, the
         # archive's own credit and year included. That labels a human
-        # catalogued fact as model output, which is the exact inverse of what
+        # cataloged fact as model output, which is the exact inverse of what
         # the disclosure is for. Leading with the provenance puts the
         # trustworthy statement first and leaves the disclosure adjacent to
         # the only text it covers. holmes_post.py was corrected the same day,
@@ -1907,7 +1907,7 @@ def main():
         # seen by the model.
         #
         # The disclosure rides the generated branch only: the citation
-        # fallback is the archive's own catalogue entry, not model output.
+        # fallback is the archive's own catalog entry, not model output.
         lead = tail if desc else citation
         if len(images) > 1:
             lead = f'{lead} ({i + 1} of {len(images)})'
