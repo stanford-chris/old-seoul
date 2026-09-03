@@ -68,7 +68,7 @@ DELAY = 0.7
 UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)'
 
 # Place names that make a title Seoul. Districts, the landmarks KTV actually
-# photographed, and the neighbourhoods its captions name. Deliberately literal:
+# photographed, and the neighborhoods its captions name. Deliberately literal:
 # a looser test (any Korean place word) would drag in the national material
 # this pool exists to exclude.
 # ⚠️ 한양 is NOT in this list, though it is Seoul's own historical name: the

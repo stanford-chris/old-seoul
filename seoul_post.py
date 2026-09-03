@@ -251,7 +251,7 @@ if __name__ == '__main__':
                 if a not in _KNOWN_ARGS and j not in _skip]
     if _unknown:
         sys.exit(f'Unknown argument(s): {" ".join(_unknown)}. '
-                 f'Recognised: {" ".join(sorted(_KNOWN_ARGS))} [N]. '
+                 f'Recognized: {" ".join(sorted(_KNOWN_ARGS))} [N]. '
                  f'Refusing to run (a bare run posts live).')
 
 DRY_RUN = '--dry-run' in sys.argv
@@ -586,7 +586,7 @@ def translate_gazette(item):
     writes has to come out of that text. The temptation is real and specific —
     a caption reading "지하철 급진전" invites "Chung Woon-kyung draws the diggings
     as a star-shaped crater", which is a perfectly good sentence about a
-    picture nobody in this function has looked at. The artefact does get
+    picture nobody in this function has looked at. The artifact does get
     described, by image_alt.describe(), which is shown the actual pixels.
 
     The slot's English name is prefixed in code, not asked for, so every post
