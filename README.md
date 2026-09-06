@@ -126,20 +126,17 @@ article's coordinates and **transcription**. They join on `contentSeq`, which is
 opaque and must be taken from the listing — it looks like issue×100+n until issue
 1 article 1 turns out to be 1 rather than 101.
 
-The endpoint quirks, each of which cost an attempt:
+Endpoint quirks worth knowing before editing this:
 
 - **`newsPaperSeq` is required alongside `pageSeq`.** Without it the viewer
-  returns HTTP 200 with a 26,713-byte stub, no article data and an image href of
-  `/upload` — an empty page that looks entirely healthy.
-- **`<br/>` is the only markup in a transcription.** Everything else between
-  angle brackets is Korean editorial content: author affiliations (`<수필가>`),
-  photo captions (`<사진설명>`), sub-headings. A generic `<[^>]+>` strip, which
-  is what `seoul_dryplate_harvest.py`'s `clean()` does, deleted 27 such tokens
-  from a 60-article sample.
-- **A few coords arrays are empty in the archives' own data** (`coords : [ , ]`;
-  one of the 2,573 as of 22 August 2026). Those keep their transcription with
-  `box: null` and are counted in the report, rather than being dropped and
-  blamed on the parse.
+  returns an empty stub — HTTP 200, no article data — that otherwise looks
+  like a healthy response.
+- **`<br/>` is the only markup to strip from a transcription.** Everything
+  else between angle brackets (author affiliations, photo captions,
+  sub-headings) is real Korean editorial content, so a generic `<[^>]+>` strip
+  would delete it.
+- **A few `coords` arrays are empty in the archives' own data.** Those items
+  keep their transcription with `box: null` rather than being dropped.
 
 `--sample N` harvests N evenly-spaced listing pages for a quick test run, and
 `--out PATH` writes somewhere other than `seoul_gazette.json`. A re-run
@@ -187,10 +184,10 @@ English is a *summary*, which is where a model rounds a specific condition into
 a tidier wrong one. `_gazette_notice_prompt` therefore asks for concrete
 particulars and says to drop what will not fit rather than generalise it.
 
-⚠️ **The notice description gets 100 characters, not the larger budget it looks
-like it should have.** Measured across the 62 adverts: 140 characters fits 6% to
-29% of them and 100 fits 96%, because a gazette headline is far longer than a
-photo caption. `format_post` trims at a word boundary for the rest.
+⚠️ **The notice description is capped at 100 characters, not the larger budget
+it looks like it should have** — a gazette headline runs far longer than a
+photo caption, so 100 characters is what actually fits most adverts.
+`format_post` trims the rest at a word boundary.
 
 The model's image description passes through `educate_quotes` on its way into
 the alt text, so alt matches the caption: `reading “서울특별시”`, not
@@ -302,7 +299,7 @@ Nothing here depends on it: with no `observe.py` the bot runs unchanged.
 
 ## Reliability
 
-Three small modules guard the run itself, separate from the posting logic:
+Four small modules support the run itself, separate from the posting logic:
 
 - **`net_guard.py`** — `wait_for_network()` checks for a working network path
   before the run starts (a routeless-but-associated Wi-Fi state that ping and
@@ -316,6 +313,13 @@ Three small modules guard the run itself, separate from the posting logic:
 - **`alt_log.py`** — appends the alt text each post shipped, and whether it
   was model-generated or fell back to a citation, to `alt_history.jsonl`.
   Best-effort: a logging failure is warned about, never raised.
+- **`api_call_log.py`** — wraps `subprocess.run` (curl calls), `requests` and
+  `httpx` (which is what the atproto client uses to post) so every outbound
+  call this bot makes is logged with its target host to a shared
+  `~/Scripts/api_calls.jsonl`, the same log every opted-in script across the
+  estate writes to. Installed only in `seoul_post.py`'s real `__main__` block,
+  so importing the module for tests never activates it. Observation only: it
+  never alters a call's behavior or return value.
 
 Both guards exit 0 on a skipped run rather than failing loudly, which is only
 safe because something outside this repo (`bot_health_check.py`) alerts when
