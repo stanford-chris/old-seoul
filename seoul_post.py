@@ -359,7 +359,21 @@ def item_desc(item):
 
 
 def item_year(item):
-    return item.get('year') or ''
+    """The record's year, or '' if it has none.
+
+    The archive's own year field is read off the og:image filename by
+    seoul_harvest.py, and 608 of 9,570 records have nothing there. 306 of
+    those carry the year where the archive actually put it, at the head of the
+    title ('1959년 국군 모범용사 환영회'), and until 11 September 2026 such a post
+    went out reading 'date unknown' above a title saying 1959. Only a title
+    that STARTS with a year counts: a year inside the description is usually
+    background ('1941년 12월 진주만 기습') rather than the photograph's date,
+    and 414 of the 608 mention one somewhere.
+    """
+    if item.get('year'):
+        return item['year']
+    m = re.match(r'\s*((?:18|19|20)\d\d)년', item.get('title') or '')
+    return m.group(1) if m else ''
 
 
 def item_images(item):
