@@ -241,6 +241,14 @@ generated description is prefixed `A.I.-generated description:`
 (`image_alt.DISCLOSURE`); the citation fallback is not, since it is
 catalog metadata rather than a model's claim.
 
+Both calls run `claude -p --restricted --tools Read` (`image_alt.CONFINED`)
+since 11 September 2026. Unconfined, `claude -p` is an agent with a shell,
+not a vision endpoint: in a sibling bot it was found cropping images through
+a dozen tool calls, and once running the project's own code and returning a
+progress report as the answer. Confined, the model can read the one image in
+its working directory and nothing else, and answers in about seven seconds a
+call rather than ten.
+
 ### 3. Check the English against the Korean (`check_translation`)
 
 Nothing used to. Accuracy rested on instructions inside the translation

@@ -20,6 +20,9 @@ the reader (see _strip_meta): those had been shipping to screen readers.
 
 The model runs with cwd set to the temp directory holding the one image, so
 the only file it can reach by a bare name is the one it is being asked about.
+Since 11 September 2026 it also runs `--restricted --tools Read` (see CONFINED
+below), so that file is the only thing it can do at all: no shell, no other
+directory, no settings-file hooks.
 """
 
 import re
@@ -47,6 +50,24 @@ LIMIT_BUDGET_S = 3600
 _limit_waited = False
 MAX_CHARS = 600
 MIN_CHARS = 20
+
+# ⚠️⚠️ Every `claude -p` call in this module carries these flags, since
+# 11 September 2026, and the reason is on the record in everygeorgia's
+# transcribe.py, where it was found: unconfined, `claude -p` is an AGENT with
+# Bash, not a vision endpoint. On a hard image there it cropped and enlarged
+# the file with sips and Python through a dozen tool calls (60-280 s each,
+# the timeouts); on one page it ran `find ~ -iname clips.py`, read that
+# project's own code, executed it on three other pages and returned a progress
+# report as the "transcription". Nothing here stopped the same thing: cwd=td
+# confines a bare filename, not the model. --restricted removes every
+# command-running tool, confines the file tools to cwd and ignores the user's
+# settings files (so no hook and no permission rule leaks in); --tools Read
+# leaves exactly one way to look at the one image. Measured 11 September 2026:
+# a path outside cwd is refused, a request for a shell is answered NO_SHELL.
+# The verifier call is confined too, deliberately: it is the same agent
+# looking at the same file, and a verdict reached by running code is not a
+# verdict about the picture.
+CONFINED = ['--restricted', '--tools', 'Read']
 
 # Prefixed by callers to any alt text built from describe()'s output.
 #
@@ -308,10 +329,10 @@ def _unsupported(image_bytes, text, *, env, model, timeout, suffix, log):
             name = f'image{suffix}'
             Path(td, name).write_bytes(image_bytes)
             r = subprocess.run(
-                ['claude', '-p', '--model', model,
+                ['claude', '-p', *CONFINED, '--model', model,
                  VERIFY_PROMPT.format(name=name, alt=text)],
                 capture_output=True, text=True, env=env, cwd=td,
-                timeout=timeout)
+                stdin=subprocess.DEVNULL, timeout=timeout)
     except (subprocess.TimeoutExpired, OSError) as exc:
         log(f'  (description not verified: {exc.__class__.__name__})')
         return None
@@ -339,9 +360,9 @@ def _generate(image_bytes, prompt, *, env, model, timeout, suffix, log):
                 name = f'image{suffix}'
                 Path(td, name).write_bytes(image_bytes)
                 r = subprocess.run(
-                    ['claude', '-p', '--model', model, prompt],
+                    ['claude', '-p', *CONFINED, '--model', model, prompt],
                     capture_output=True, text=True, env=env, cwd=td,
-                    timeout=timeout)
+                    stdin=subprocess.DEVNULL, timeout=timeout)
         except (subprocess.TimeoutExpired, OSError) as exc:
             log(f'  (image description unavailable: {exc.__class__.__name__})')
             # A verification failure already gets one retry, below. A raw
