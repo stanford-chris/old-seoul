@@ -1064,10 +1064,19 @@ def _claude_json(prompt, model=TRANSLATE_MODEL):
     limit_waited = False
     while True:
         try:
+            # ⚠️ --restricted --tools "": no tools at all, since 11 September
+            # 2026, matching image_alt.py's CONFINED and the reason recorded
+            # there. This is text in, JSON out, and needs no tool; unconfined,
+            # `claude -p` is an agent with Bash in this Mac's home directory,
+            # fed whatever the archives' captions say. --restricted also
+            # ignores the user's settings files, so no hook fires from inside
+            # a post. stdin=DEVNULL because the CLI otherwise waits three
+            # seconds for stdin on every hand-run call.
             result = subprocess.run(
-                ['claude', '-p', '--model', model, prompt],
+                ['claude', '-p', '--restricted', '--tools', '',
+                 '--model', model, prompt],
                 capture_output=True, text=True, env=claude_env(),
-                timeout=CLAUDE_TIMEOUT
+                stdin=subprocess.DEVNULL, timeout=CLAUDE_TIMEOUT
             )
         except subprocess.TimeoutExpired:
             if attempt == 0:

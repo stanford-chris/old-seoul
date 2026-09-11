@@ -218,7 +218,10 @@ instruction the model follows most of the time still ships the exception.
 
 Translation is done by calling the [`claude` CLI](https://docs.claude.com/en/docs/claude-code/overview)
 (`claude -p`, Haiku model), which returns a compact JSON object with the English
-title and a one-sentence description in British date style.
+title and a one-sentence description in British date style. Every such call,
+the translation check's included, runs `--restricted --tools ""` since
+11 September 2026: no tools at all, for the reason given under `image_alt.py`
+below.
 
 Two rules in the prompt: a description **keeps a reason the Korean gives**
 (dropping the cause behind an effect reads as a non sequitur), and it **does
