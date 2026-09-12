@@ -1,0 +1,25 @@
+# Runs seoul_loc_harvest.py from a US address, which is the only place it can
+# run: loc.gov's catalogue challenge-walls Korean addresses (see the script's
+# docstring). Hand-dispatched; the pool comes back as an artifact, never a
+# commit, because the pool files are runtime state and gitignored.
+#
+#   gh workflow run loc-harvest.yml
+#   gh run download <run-id> -n seoul_loc
+name: loc-harvest
+on: { workflow_dispatch: {} }
+jobs:
+  harvest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with: { python-version: '3.12' }
+      - run: python3 seoul_loc_harvest.py 2>&1 | tee harvest.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: seoul_loc
+          path: |
+            seoul_loc.json
+            harvest.log
+          if-no-files-found: warn
