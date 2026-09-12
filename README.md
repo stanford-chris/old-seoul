@@ -12,7 +12,7 @@ caption's framing and the bot's bio make clear.
 
 ## Sources
 
-Four pools, posted from as one. Each item's format, tags and credit follow the
+Five pools, posted from as one. Each item's format, tags and credit follow the
 pool it came from.
 
 | Pool | Source | Period | Postable |
@@ -21,13 +21,15 @@ pool it came from.
 | `seoul_dryplate.json` | [National Museum of Korea](https://www.museum.go.kr/dryplate/main.do), Government-General glass plates | 1909-1945 | 1,452 |
 | `seoul_gazette.json` | [Seoul Metropolitan Archives](https://archives.seoul.go.kr/newspaper), 서울시보 cartoons and adverts | 1982-83 | 169 of 2,573 |
 | `seoul_gongu.json` | [한국정책방송원 KTV](https://gongu.copyright.or.kr), via 공유마당 | 1950s-70s news photography | 333 |
+| `seoul_loc.json` | [Library of Congress](https://www.loc.gov/pictures/), Prints & Photographs | 1895-1911 stereographs, Carpenter album, studio scenes | ~150 |
 
 ⚠️ **KTV and gazette shares are configured, not left to pool size.** Both pull
 down the archive pool's officials-at-ceremonies bias, so an unweighted draw
 would surface each too rarely to matter. `SOURCES['gongu']['share'] = 0.20`
 puts KTV in one post in five (~2.5 days apart, lasting ~2 years);
 `SOURCES['gazette']['share'] = 0.10` puts the gazette in one in ten (~5 days
-apart, ~2.5 years). The two photo pools split the remaining share in
+apart, ~2.5 years), and `SOURCES['loc']['share'] = 0.10` does the same for
+the Library of Congress. The two big photo pools split the remaining share in
 proportion to their own sizes. See `draw_weights`, which also covers the
 gazette being absent, being the only source (`--source gazette`), and shares
 misconfigured past 1.
@@ -149,6 +151,32 @@ not be read: an incomplete harvest must not read as a clean one.
 the archives' document and drawing records live, and this script never goes
 there.
 
+### 1d. Harvest the Library of Congress (`seoul_loc_harvest.py`)
+
+Reads every pre-1945 record the Library's Prints & Photographs division
+returns for "seoul", opens each item record, keeps the ones whose rights
+advisory reads "No known restrictions on publication" and that serve a JPEG,
+and writes `seoul_loc.json`. About 150 name Seoul in their own title,
+description or notes; the Korea-wide stereographs the search also returns are
+kept in the file, flagged `seoul_named: false`, and not posted.
+
+⚠️ **It cannot run from Seoul.** loc.gov's catalogue answers every request
+from a Korean address with a Cloudflare challenge that never clears, in curl
+and in a real browser alike, while the same URLs answer plainly from a US
+address. The image host `tile.loc.gov` is not walled, so posting works from
+here; only the harvest needs a US egress. `.github/workflows/loc-harvest.yml`
+runs it on a GitHub runner and returns the pool as an artifact rather than a
+commit, since the pool files are runtime state:
+
+```bash
+gh workflow run loc-harvest.yml
+gh run download <run-id> -n seoul_loc     # writes seoul_loc.json here
+```
+
+⚠️ **Item records are read six seconds apart.** At 1.2 s the catalogue
+answered 429 after six and refused everything after; at 6 s, 114 in a row
+passed. A full harvest is about 25 minutes.
+
 ### 2. Post (`seoul_post.py`)
 
 Picks a random item that hasn't been posted yet from the combined pool,
@@ -167,7 +195,23 @@ Three things vary by source rather than globally:
   the record declares and refuses on a mismatch: the coordinates are expressed
   in the declared one, and a silent mis-crop would ship for months.
 - **The date.** A gazette record states its exact publication day, so the
-  header is that day and the model is never asked to find one.
+  header is that day and the model is never asked to find one. ⚠️ The Library
+  of Congress pads a bare year to `1904-01-01`, so that pool declares
+  `day_is_placeholder` and its header is the year alone; a record that only
+  says "between 1910 and 1920" prints exactly that.
+- **The language.** The Library of Congress captions are English, written at
+  the time, and they are posted verbatim after the style pass: "The 'Hermit
+  Kingdom' awakening" is a document of 1904 and the date above it says so.
+  What the model writes for that pool is the *Korean* line, and
+  `check_korean` reads it against the English, the mirror of the check every
+  other pool gets (`korean_line_checked`). A Korean line flagged twice redraws
+  the item; there is no English-only branch, because every post on this
+  account is bilingual.
+- **Stereographs.** A stereograph card carries two near-identical frames and a
+  printed caption. `stereo_frame` finds the left frame from the pixels (the
+  mount is flat, the picture is not, so the frame is the longest run of
+  high-variance columns and rows in the left half) and posts that alone,
+  falling back to the plain left half if it finds nothing plausible.
 
 ⚠️ **`translate_gazette` must never describe the artifact.** It is shown the
 archives' transcription and nothing else. A caption reading `지하철 급진전` invites
@@ -395,6 +439,8 @@ All live alongside the scripts and are gitignored:
   `seoul_gazette_harvest.py`; only its cartoons and adverts are postable.
 - `seoul_gongu.json` — the KTV news-photography pool. Built by
   `seoul_gongu_harvest.py`; flagged `posted` the same way.
+- `seoul_loc.json` — the Library of Congress pool. Built by
+  `seoul_loc_harvest.py` on a US runner; flagged `posted` the same way.
 - `seoul_state.json` — records `last_success_at`, the timestamp of the most
   recent successful post, and the recent topic emojis driving the cooldown.
 - `alt_history.jsonl` — one line per posted item, recording the alt text that
@@ -428,6 +474,12 @@ glass plates are published under
 commercial and derivative use, on the single condition of attribution). The
 museum credit in the caption and in every image's alt text is that attribution,
 so it is a license term rather than a courtesy and must not be dropped.
+
+**[Library of Congress](https://www.loc.gov/pictures/)** — every item in the
+pool carries the Prints & Photographs division's own advisory, "No known
+restrictions on publication", read off its record at harvest and kept on the
+record as `rights`. The Library asks for no credit; the credit line is the
+reader's route to the catalogue, and the link rides on it.
 
 A note on what these photographs are: the glass plates were made from 1909 to
 about 1945 by the Japanese Government-General's survey of Korean antiquities,

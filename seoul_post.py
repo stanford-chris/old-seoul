@@ -46,6 +46,7 @@ ARCHIVE = Path(__file__).parent / 'seoul_archive.json'
 DRYPLATE = Path(__file__).parent / 'seoul_dryplate.json'
 GAZETTE = Path(__file__).parent / 'seoul_gazette.json'
 GONGU = Path(__file__).parent / 'seoul_gongu.json'
+LOC = Path(__file__).parent / 'seoul_loc.json'
 
 # Sent with every image fetch. See fetch_image: 공유마당 refuses curl's default
 # agent with a bare 400.
@@ -190,6 +191,42 @@ SOURCES = {
         # is the one number to move if the balance feels wrong: raise it for
         # more street, lower it to make the set last longer. See draw_weights.
         'share': 0.20,
+    },
+    'loc': {
+        'path': LOC,
+        # "No known restrictions on publication", read off every item record
+        # at harvest (seoul_loc_harvest.py) and kept on the record as `rights`.
+        # The Library asks for nothing, but the credit is the reader's route to
+        # the catalogue, and the link rides on it.
+        'link_label': '🗃️ Library of Congress',
+        'item_url': None,
+        'alt_tail': 'Library of Congress, Prints and Photographs Division',
+        'alt_credit': 'Library of Congress',
+        'dated': True,
+        'tags': PHOTO_TAGS,
+        # ⚠️ The source language is ENGLISH, which inverts the whole caption
+        # pipeline. The catalogue title is the caption, verbatim after the
+        # style pass: it is a document of 1904 and is posted as one, under a
+        # date that says so. The model writes the KOREAN line instead, and
+        # the check reads the Korean against the English. See
+        # korean_line_checked.
+        'english': True,
+        # ⚠️ The catalogue's `date` field pads a bare year to 1 January
+        # ('1904-01-01'), so item_date_en must never read it as a day.
+        'day_is_placeholder': True,
+        # Only items whose own title, description or notes name Seoul. The
+        # harvest keeps the Korea-wide stereographs the search also returned,
+        # flagged, so widening this is a one-line change and no re-harvest.
+        'select': lambda it: bool(it.get('seoul_named')),
+        # A stereograph is two near-identical frames on one card; the post
+        # carries one. See stereo_frame.
+        'crop_stereo': True,
+        # Target share of the feed, and the number to move if the balance
+        # feels wrong. About 150 items against 10,956: unweighted they would
+        # surface once in 70 posts. At 0.10 it is one post in ten, so one
+        # every five days at two a day, and the set lasts about two years,
+        # which is the gazette's arithmetic exactly. See draw_weights.
+        'share': 0.10,
     },
 }
 
@@ -479,6 +516,11 @@ def item_date_en(item):
     """
     raw = (item.get('date') or '').strip()
     if not re.fullmatch(r'\d{4}-\d{2}-\d{2}', raw):
+        return ''
+    # ⚠️ The Library of Congress writes a bare year as '1904-01-01'. Read as a
+    # day, that would head every 1904 stereograph "1 January 1904", which is a
+    # precise date the record never stated. A source that says so gets no day.
+    if SOURCES.get(item.get('_source'), {}).get('day_is_placeholder'):
         return ''
     d = datetime.strptime(raw, '%Y-%m-%d')
     # No leading zero on the day: UK style is "1 February", not "01 February".
@@ -872,6 +914,134 @@ def check_translation(item, title_en, desc_en, log=print):
             'error': ''}
 
 
+def translate_to_korean(title_en, desc_en, year):
+    """Write the Korean line for an English-captioned item via claude -p.
+
+    The mirror of translate(): here the English is the source, verbatim from
+    the Library of Congress catalogue, and the Korean is the model's. One
+    line, the title alone: the description stays English-only, since a
+    hundred characters of translated 1904 caption under a translated 1904
+    title would double the post's length for a line most readers get from
+    the English.
+    """
+    prompt = (
+        f'Translate this English caption from a historical photograph of '
+        f'Seoul into concise Korean.\n\n'
+        f'Caption (English): {title_en}\n'
+        f'Description (English): {desc_en or "(none)"}\n'
+        f'Year: {year or "unknown"}\n\n'
+        f'Rules:\n'
+        f'- Natural written Korean, max 40 characters, a caption rather than a sentence\n'
+        f'- The caption was written in {year or "the early 1900s"}: translate '
+        f'what it says, in a neutral modern register. Do not soften, judge or '
+        f'modernize its claims, and do not add anything it does not say\n'
+        f'- Place names in their standard modern Korean form (Seoul -> 서울, '
+        f'East Gate -> 동대문, Pekin Pass -> 무악재, Chemulpo -> 제물포, '
+        f'Han River -> 한강); a romanized Korean name you cannot resolve stays '
+        f'as written\n'
+        f'- No quotation marks unless the English has them\n'
+        f'- Return JSON only: {{"title": "..."}}'
+    )
+    out = _claude_json(prompt)
+    return {'title': (out.get('title') or '').strip()}
+
+
+def _check_prompt_korean(item, title_ko):
+    return (
+        f'You are checking a Korean caption written by another model against '
+        f'the English it was made from. This is a factual check, not an edit, '
+        f'and nothing you write is published.\n\n'
+        f'English caption (the source, a Library of Congress catalogue title '
+        f'written at the time): {item["title"]}\n'
+        f'English description: {item_desc(item) or "(none)"}\n'
+        f'Catalog year: {item_year(item) or "unknown"}\n\n'
+        f'Korean caption: {title_ko}\n\n'
+        f'Report a problem ONLY where you can point at the English that makes '
+        f'it wrong:\n'
+        f'- a statement the English does not support, or contradicts\n'
+        f'- a place, a person, an institution, a number or a date rendered '
+        f'wrongly, or a Seoul place name given a wrong modern equivalent\n'
+        f'- a misreading of the English\n'
+        f'- a word that goes FURTHER than the English, or that softens or '
+        f'editorializes a period phrase the English uses plainly\n\n'
+        f'NEVER report these:\n'
+        f'- anything merely left out: the line is capped at 40 characters\n'
+        f'- style, register, spelling, spacing or wording you would have '
+        f'chosen differently\n'
+        f'- anything about the photograph itself, which nobody in this chain '
+        f'has seen\n\n'
+        f'If you are unsure, PASS it.\n'
+        f'Return JSON only, an empty string where there is no problem and one '
+        f'short sentence naming it where there is: {{"title": ""}}')
+
+
+def check_korean(item, title_ko, log=print):
+    """check_translation, the other way round: the Korean line against the
+    English source. Same contract, same "a check that cannot run is not a
+    failure" rule."""
+    stray = stray_years(item, title_ko)
+    if stray:
+        return {'title': f'states a year the record does not: {", ".join(stray)}',
+                'description': '', 'error': ''}
+    try:
+        out = _claude_json(_check_prompt_korean(item, title_ko),
+                           model=CHECK_MODEL)
+    except RuntimeError as exc:
+        log(f'  (Korean check did not run: {exc})')
+        return {'title': '', 'description': '', 'error': str(exc)}
+    return {'title': (out.get('title') or '').strip(), 'description': '',
+            'error': ''}
+
+
+def source_line(item):
+    """The line under the English: the source's own title verbatim for the
+    Korean pools, and the model's Korean line for an English source."""
+    return item.get('_line_ko') or item.get('title') or ''
+
+
+def korean_line_checked(item, log=print):
+    """The English-source counterpart of translate_checked.
+
+    The English is the record's own caption after the style pass, so it is
+    never checked and never dropped. What the model writes is the Korean, and
+    what the check reads is that Korean against the English. A line flagged
+    once is rewritten; flagged twice, the item is redrawn, exactly as a Korean
+    title flagged twice is. There is no "post the English alone" branch on
+    purpose: every post on this account is bilingual, and a post that was not
+    would read as a fault rather than a choice.
+
+    On success the Korean is left on the item as `_line_ko` (an in-memory tag,
+    stripped like `_source` before the pool is written back) and the usual
+    (title_en, desc_en, date) triple is returned, so main() needs no second
+    contract.
+    """
+    title_en = house_style(item['title'])
+    desc_en = house_style(item_desc(item))
+    if desc_en and desc_restates_title(title_en, desc_en):
+        log('  EN desc restates the title — dropped.')
+        desc_en = ''
+    log(f'  EN title (source): {title_en}')
+    log(f'  EN desc  (source): {desc_en}')
+    for attempt in range(1, TRANSLATE_ATTEMPTS + 1):
+        raw = translate_to_korean(title_en, desc_en, item_year(item))
+        title_ko = house_style(raw.get('title'))
+        log(f'  KO line: {title_ko}')
+        problems = check_korean(item, title_ko, log=log)
+        if title_ko and not problems['title']:
+            item['_line_ko'] = title_ko
+            log_check(item, title_en, desc_en, problems, attempt, 'passed')
+            return title_en, desc_en, ''
+        if not title_ko:
+            problems = dict(problems, title='the model returned no Korean')
+        log(f'  !! Korean line failed the check: {problems["title"]}')
+        if attempt < TRANSLATE_ATTEMPTS:
+            log_check(item, title_en, desc_en, problems, attempt, 'retranslated')
+            log('  re-translating')
+            continue
+        log_check(item, title_en, desc_en, problems, attempt, 'redrawn')
+        return None
+
+
 def house_style(text):
     """The deterministic style pass every translated line goes through."""
     return capitalize_after_colon(group_thousands(educate_quotes(text or '')))
@@ -895,6 +1065,8 @@ def translate_checked(item, log=print):
                      so it returns to the pool for another day and another
                      reading.
     """
+    if SOURCES[item['_source']].get('english'):
+        return korean_line_checked(item, log=log)
     for attempt in range(1, TRANSLATE_ATTEMPTS + 1):
         if item['_source'] == 'gazette':
             raw = translate_gazette(item)
@@ -1046,6 +1218,9 @@ def log_check(item, title_en, desc_en, problems, attempt, action):
         'desc_ko': item_desc(item)[:400],
         'title_en': title_en,
         'desc_en': desc_en,
+        # The model's Korean, where the source was English (see
+        # korean_line_checked); absent otherwise.
+        **({'line_ko': item['_line_ko']} if item.get('_line_ko') else {}),
         'problems': {k: v for k, v in problems.items() if v},
         'dry': DRY_RUN,
     })
@@ -1494,6 +1669,10 @@ def alt_tail(source, item, year_en):
     lose real context on 80% of the pool to protect against nothing.
     """
     obj = source.get('alt_object', '')
+    if item.get('stereo'):
+        # One frame of a stereograph pair: the card carried two, the post
+        # carries the left one. See stereo_frame.
+        obj = 'stereograph, one frame of the pair'
     period = source.get('alt_period', '')
     if obj and period:
         year = re.search(r'\d{4}', item_year(item))
@@ -1713,6 +1892,81 @@ def crop_article(data, item):
     return out.getvalue()
 
 
+# A frame is accepted only if it spans at least this much of the half-card in
+# each direction; anything smaller means the detector found the caption strip
+# or a scratch, and the plain left half is used instead.
+STEREO_MIN_SPAN = 0.30
+STEREO_PAD = 4
+
+
+def _content_span(values, min_len):
+    """(start, end) of the longest run of high-variance rows or columns, or
+    None. The mount is flat and the picture is not, so the picture is the
+    longest run of values above a third of the peak, tolerating gaps of a few
+    pixels for a scratch or a light patch of sky."""
+    if not values:
+        return None
+    threshold = max(values) * 0.35
+    idx = [i for i, v in enumerate(values) if v > threshold]
+    if not idx:
+        return None
+    best = (idx[0], idx[0])
+    start = prev = idx[0]
+    for i in idx[1:]:
+        if i - prev > 4:
+            if prev - start > best[1] - best[0]:
+                best = (start, prev)
+            start = i
+        prev = i
+    if prev - start > best[1] - best[0]:
+        best = (start, prev)
+    return best if best[1] - best[0] >= min_len else None
+
+
+def stereo_frame(data, log=print):
+    """One frame of a stereograph: the left picture, cut from the card.
+
+    A stereograph is two near-identical photographs side by side on a mount
+    with a printed caption under them. Posted whole it is a doubled picture
+    at half size, so the left frame is found and cut out. The frame is found
+    from the pixels rather than assumed to be the left half: the mount is a
+    flat colour whichever colour it is, so the picture is the longest run of
+    high-variance columns and rows in the left half of the scan. Where that
+    finds nothing plausible (a card scanned without its mount, a frame the
+    detector cannot see), the plain left half is used, which is never wrong,
+    only looser.
+
+    Pillow is imported here as crop_article does, so a broken install costs
+    the stereographs their trim and nothing else its posts.
+    """
+    try:
+        from PIL import Image
+    except ImportError as exc:                       # pragma: no cover
+        raise ImageFetchError(f'Pillow needed to crop a stereograph: {exc}')
+    import io
+    import statistics
+    card = Image.open(io.BytesIO(data))
+    w, h = card.size
+    half = card.convert('L').crop((0, 0, w // 2, h))
+    hw, hh = half.size
+    # get_flattened_data replaces getdata in Pillow 12; older installs
+    # still carry getdata only.
+    px = list(getattr(half, 'get_flattened_data', half.getdata)())
+    cols = [statistics.pstdev(px[x::hw]) for x in range(hw)]
+    rows = [statistics.pstdev(px[y * hw:(y + 1) * hw]) for y in range(hh)]
+    span_x = _content_span(cols, hw * STEREO_MIN_SPAN)
+    span_y = _content_span(rows, hh * STEREO_MIN_SPAN)
+    if span_x and span_y:
+        box = (max(0, span_x[0] - STEREO_PAD), max(0, span_y[0] - STEREO_PAD),
+               min(hw, span_x[1] + 1 + STEREO_PAD), min(hh, span_y[1] + 1 + STEREO_PAD))
+    else:
+        box = (0, 0, hw, hh)
+    out = io.BytesIO()
+    card.convert('RGB').crop(box).save(out, format='JPEG', quality=90)
+    log(f'  stereograph: left frame {box} of {card.size} ({out.tell()} bytes)')
+    return out.getvalue()
+
+
 def fetch_item_images(item):
     """Every picture for one item, or ImageFetchError if any one of them fails.
 
@@ -1735,6 +1989,8 @@ def fetch_item_images(item):
         data = fetch_image(url)
         if source.get('crop'):
             data = crop_article(data, item)
+        if source.get('crop_stereo') and item.get('stereo'):
+            data = stereo_frame(data)
         images.append(data)
     return images
 
@@ -1774,7 +2030,8 @@ def main():
     if not pools:
         sys.exit('Error: no photo pool found. Re-run the harvest scripts '
                  '(seoul_harvest.py, ~2.5 hrs; seoul_dryplate_harvest.py, ~3 min; '
-                 'seoul_gazette_harvest.py, ~9 min).')
+                 'seoul_gazette_harvest.py, ~9 min; seoul_loc_harvest.py, '
+                 '~25 min on a US runner, see its docstring).')
     if not postable:
         print('No postable items remaining in any pool.')
         sys.exit(0)
@@ -1876,7 +2133,7 @@ def main():
 
     # Format post
     header = post_header(item, source, date_en)
-    post_text = format_post(title_en, desc_en, item['title'], header,
+    post_text = format_post(title_en, desc_en, source_line(item), header,
                             item, source)
     post_plain = post_text.build_text()
     print(f'\nPost ({len(post_plain)} chars):\n{"-"*40}\n{post_plain}\n{"-"*40}')
@@ -1898,10 +2155,15 @@ def main():
     # the glass plates are 공공누리 제1유형, whose one condition is 출처표시.
     year_ko = item_year(item) or '연대미상'
     year_en = date_en or item_year(item) or 'date unknown'
-    citation = (f'{title_en} / {item["title"]} — {year_ko} — '
-                f'{source["alt_credit"]}')
+    if source.get('english'):
+        # The source title IS the English, so it is not printed twice.
+        citation = f'{title_en} — {year_en} — {source["alt_credit"]}'
+        context = f'{title_en} / {item_year(item) or "year unknown"}'
+    else:
+        citation = (f'{title_en} / {item["title"]} — {year_ko} — '
+                    f'{source["alt_credit"]}')
+        context = f'{title_en} / {item["title"]} / {item_year(item) or "year unknown"}'
     tail = alt_tail(source, item, year_en)
-    context = f'{title_en} / {item["title"]} / {item_year(item) or "year unknown"}'
     env = claude_env()
 
     image_alts, alt_generated = [], []
@@ -1980,8 +2242,10 @@ def main():
     # in-memory tag, so it is stripped before the pool is written back.
     item['posted'] = True
     pool = pools[item['_source']]
+    # Every underscore key is an in-memory tag (`_source`, `_line_ko`), never
+    # pool data.
     write_json_atomic(source['path'],
-                      [{k: v for k, v in it.items() if k != '_source'}
+                      [{k: v for k, v in it.items() if not k.startswith('_')}
                        for it in pool],
                       ensure_ascii=False, indent=2)
     state['last_success_at'] = datetime.now(timezone.utc).isoformat()
