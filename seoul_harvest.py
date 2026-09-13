@@ -8,13 +8,14 @@ Usage:
     python3 seoul_harvest.py --sample N # fetch N evenly-spaced items for testing
 """
 
-import json
 import os
 import re
 import subprocess
 import sys
 import time
 from pathlib import Path
+
+from harvest_common import load_keyed_json, save_keyed_json
 
 BASE_URL = 'https://archives.seoul.go.kr'
 OUTPUT = Path(__file__).parent / 'seoul_archive.json'
@@ -104,13 +105,11 @@ def parse_item(item_id, html):
 
 
 def load_existing():
-    if OUTPUT.exists():
-        return {item['id']: item for item in json.loads(OUTPUT.read_text())}
-    return {}
+    return load_keyed_json(OUTPUT)
 
 
 def save(items_by_id):
-    OUTPUT.write_text(json.dumps(list(items_by_id.values()), ensure_ascii=False, indent=2))
+    save_keyed_json(OUTPUT, items_by_id, indent=2, trailing_newline=False)
 
 
 def main():

@@ -46,13 +46,14 @@ than a bad harvest. Note the originals are modest anyway: 서울 광화문 거�
 600x499, against the archives pool's 2000px scans.
 """
 
-import json
 import re
 import subprocess
 import sys
 import time
 import urllib.parse
 from pathlib import Path
+
+from harvest_common import load_keyed_json, save_keyed_json
 
 OUTPUT = Path(__file__).parent / 'seoul_gongu.json'
 BASE = 'https://gongu.copyright.or.kr'
@@ -175,14 +176,11 @@ def parse_item(item_id, html):
 
 
 def load_existing():
-    if not OUTPUT.exists():
-        return {}
-    return {it['id']: it for it in json.loads(OUTPUT.read_text())}
+    return load_keyed_json(OUTPUT)
 
 
 def save(items_by_id):
-    OUTPUT.write_text(json.dumps(list(items_by_id.values()),
-                                 ensure_ascii=False, indent=1) + '\n')
+    save_keyed_json(OUTPUT, items_by_id)
 
 
 def main():
