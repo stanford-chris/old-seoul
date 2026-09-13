@@ -236,26 +236,16 @@ SOURCES = {
 _KNOWN_ARGS = {'--dry-run', '--tail', '--checks', '--source'}
 
 
-def _tail_n(argv):
-    """N for `--tail [N]` (print recent alt text and exit), or None if absent.
-    N defaults to 10 and a bare integer right after --tail overrides it."""
-    if '--tail' not in argv:
+def _flag_n(argv, flag, default=10):
+    """N for `<flag> [N]` (e.g. `--tail [N]`), or None if the flag is absent.
+    N defaults to 10 and a bare integer right after the flag overrides it,
+    floored at 1."""
+    if flag not in argv:
         return None
-    i = argv.index('--tail')
+    i = argv.index(flag)
     if i + 1 < len(argv) and argv[i + 1].isdigit():
         return max(1, int(argv[i + 1]))
-    return 10
-
-
-def _checks_n(argv):
-    """N for `--checks [N]` (print recent translation-check verdicts and
-    exit), or None if absent. Same shape as --tail."""
-    if '--checks' not in argv:
-        return None
-    i = argv.index('--checks')
-    if i + 1 < len(argv) and argv[i + 1].isdigit():
-        return max(1, int(argv[i + 1]))
-    return 10
+    return default
 
 
 def _source_filter(argv):
@@ -292,8 +282,8 @@ if __name__ == '__main__':
                  f'Refusing to run (a bare run posts live).')
 
 DRY_RUN = '--dry-run' in sys.argv
-TAIL_N = _tail_n(sys.argv)
-CHECKS_N = _checks_n(sys.argv)
+TAIL_N = _flag_n(sys.argv, '--tail')
+CHECKS_N = _flag_n(sys.argv, '--checks')
 SOURCE_FILTER = _source_filter(sys.argv)
 
 MAX_POST_CHARS = 290  # leave 10 char buffer under Bluesky's 300 limit
