@@ -86,12 +86,22 @@ COLLECTION_NOISE = re.compile(
 
 def fetch_json(url, params=None):
     """Parsed JSON, or None after four tries. A 429 is waited out for 30 s
-    before the retry; the listing and item endpoints both throttle."""
+    before the retry; the listing and item endpoints both throttle.
+
+    ⚠️ **`-L` is load-bearing.** The search listing hands back item ids as
+    `http://www.loc.gov/item/.../`, and the catalogue answers that scheme with
+    a bare 301 to the `https://` form. Without `-L` every single item fetch
+    reads that redirect's empty body as an unparseable response and retries
+    into the same 301 four times, which is exactly how the 12 September 2026
+    harvest ran clean, found 244 candidates, and wrote a pool of zero: every
+    item silently "could not be read" while the differently-schemed search
+    endpoint (already `https://`) kept working the whole time.
+    """
     params = dict(params or {}, fo='json')
     full = f'{url}?{urllib.parse.urlencode(params)}'
     for attempt in range(4):
         result = subprocess.run(
-            ['curl', '-sS', '--max-time', '90', '-A', UA, '-w', '\n%{http_code}', full],
+            ['curl', '-sS', '-L', '--max-time', '90', '-A', UA, '-w', '\n%{http_code}', full],
             capture_output=True, text=True)
         body, _, status = result.stdout.rpartition('\n')
         if result.returncode == 0 and status == '200':
