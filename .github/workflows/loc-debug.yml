@@ -1,0 +1,31 @@
+name: loc-debug
+on: { workflow_dispatch: {} }
+jobs:
+  debug:
+    runs-on: ubuntu-latest
+    steps:
+      - name: probe search endpoint
+        run: |
+          curl -sS -D - -o /tmp/search_body.txt -A 'Old-Seoul-Bot/1.0 (personal project; contact: https://chris-stanford.com)' "https://www.loc.gov/photos/?q=seoul&c=1&sp=1&fo=json" | tee /tmp/search_headers.txt
+          echo "=== search body head ==="
+          head -c 500 /tmp/search_body.txt
+      - name: probe one item endpoint (http, as harvested)
+        run: |
+          curl -sS -D - -o /tmp/item_body.txt -A 'Old-Seoul-Bot/1.0 (personal project; contact: https://chris-stanford.com)' "http://www.loc.gov/item/2001695600/?fo=json" | tee /tmp/item_headers.txt
+          echo "=== item body head ==="
+          head -c 500 /tmp/item_body.txt
+      - name: probe one item endpoint (https)
+        run: |
+          curl -sS -D - -o /tmp/item_https_body.txt -A 'Old-Seoul-Bot/1.0 (personal project; contact: https://chris-stanford.com)' "https://www.loc.gov/item/2001695600/?fo=json" | tee /tmp/item_https_headers.txt
+          echo "=== item https body head ==="
+          head -c 500 /tmp/item_https_body.txt
+      - name: probe item endpoint with -L follow
+        run: |
+          curl -sSL -D - -o /tmp/item_follow_body.txt -A 'Old-Seoul-Bot/1.0 (personal project; contact: https://chris-stanford.com)' "http://www.loc.gov/item/2001695600/?fo=json" | tee /tmp/item_follow_headers.txt
+          echo "=== item follow body head ==="
+          head -c 500 /tmp/item_follow_body.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: loc-debug
+          path: /tmp/*.txt
