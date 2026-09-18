@@ -160,13 +160,28 @@ def largest_jpeg(record):
 
 def prose(parts):
     """The sentences of a LoC description, minus the physical description
-    ('1 photographic print.', '1 negative : glass ; 5 x 7 in. or smaller.')
-    that the catalogue puts in the same field."""
+    ('1 photograph : print on card mount.', '1 slide : lantern, hand colored ;
+    3.25 x 4 in.') that the catalogue carries as its own element alongside any
+    real caption note ('Stereograph showing...', 'Photograph shows...').
+
+    ⚠️ **'photograph' is the word LOC actually uses, not 'photographic'.**
+    Measured against the 220-item harvested pool on 18 September 2026: the
+    leading word was 'photograph' on 179 items and 'slide' on 9, and neither
+    was in the original word list — only the adjective 'photographic', which
+    never once occurs as a leading word here. Every one of those 188 pieces
+    shipped unfiltered, physical-description clause and all, until this was
+    caught by a live dry-run posting one. 'book' (1 item, a bound pamphlet
+    record) was added the same pass for the same reason. 'photographic' is
+    kept since the illustrative docstring example above predates this fix and
+    may describe records outside this pool's own 220."""
     out = []
     for p in parts or []:
         for piece in str(p).split(' | '):
             piece = piece.strip()
-            if piece and not re.match(r'^\d+\s+(photographic|negative|print|photomechanical|stereograph)', piece, re.I):
+            if piece and not re.match(
+                    r'^\d+\s+(photographs?|photographic|negatives?|prints?|'
+                    r'photomechanical|stereographs?|slides?|books?)\b',
+                    piece, re.I):
                 out.append(piece)
     return ' '.join(out)
 

@@ -16,6 +16,7 @@ shape seoul_loc_harvest.py writes.
 import io
 import unittest
 
+import seoul_loc_harvest
 import seoul_post
 
 LOC = seoul_post.SOURCES['loc']
@@ -55,6 +56,47 @@ class PoolWiring(unittest.TestCase):
     def test_the_link_rides_on_the_record_s_own_url(self):
         self.assertEqual(seoul_post.item_link(ITEM, LOC),
                          'https://www.loc.gov/item/2019633106/')
+
+
+class DescriptionProse(unittest.TestCase):
+    """seoul_loc_harvest.prose() strips the physical-description element the
+    catalogue carries alongside any real caption note. Found live 18
+    September 2026 when a dry-run posted the raw '1 slide : ...' clause
+    unfiltered: the original word list matched only the adjective
+    'photographic', never the noun 'photograph' LOC actually leads with."""
+
+    def test_a_bare_photograph_clause_is_dropped(self):
+        self.assertEqual(
+            seoul_loc_harvest.prose(['1 photograph : print.']), '')
+
+    def test_a_slide_clause_is_dropped(self):
+        self.assertEqual(
+            seoul_loc_harvest.prose(
+                ['1 slide : lantern, hand colored ; 3.25 x 4 in.']), '')
+
+    def test_a_book_clause_is_dropped(self):
+        self.assertEqual(
+            seoul_loc_harvest.prose(
+                ['1 book (unnumbered pages) : color photomechanical ; '
+                 'cover 20 x 15 cm.']), '')
+
+    def test_a_real_caption_note_beside_the_physical_clause_survives(self):
+        # Two separate elements, as the catalogue's own description array
+        # carries them -- the physical-description one is dropped, the real
+        # note is not, and they never merge into one lost sentence.
+        self.assertEqual(
+            seoul_loc_harvest.prose([
+                '1 photograph : print on card mount ; mount 9 x 18 cm '
+                '(stereograph format)',
+                'Stereograph showing children on hill above rooftops.']),
+            'Stereograph showing children on hill above rooftops.')
+
+    def test_a_count_that_merely_starts_a_sentence_is_not_a_physical_clause(self):
+        # '2 boys standing, full lgth.' is real caption content, not a
+        # physical-description element -- 'boys' must never join the list.
+        self.assertEqual(
+            seoul_loc_harvest.prose(['2 boys standing, full lgth.']),
+            '2 boys standing, full lgth.')
 
 
 class PlaceholderDate(unittest.TestCase):
