@@ -140,6 +140,10 @@ WORSE = ('Black-and-white photograph of a snow-covered wooden hall behind '
 ALL_FOUND = 'FOUND | wooden hall | center\nFOUND | bare tree | foreground'
 ONE_ABSENT = ('FOUND | wooden hall | center\n'
               'ABSENT | a small figure walking | it is the trunk of the tree')
+REWORDED = ('Black-and-white photograph of a snow-covered wooden hall behind '
+            'a bare tree, with a person on the path in front.')
+REWORDED_ABSENT = ('FOUND | wooden hall | center\n'
+                   'ABSENT | a person on the path | it is the trunk of the tree')
 
 
 class Unsupported(unittest.TestCase):
@@ -206,13 +210,42 @@ class DescribeVerification(unittest.TestCase):
             [(0, WORSE), (0, GOOD)], [(0, ONE_ABSENT), (0, ALL_FOUND)])
         self.assertIn('a small figure walking', fake.describe_prompts[1])
 
-    def test_two_failures_drop_the_description(self):
+    def test_three_failures_drop_the_description(self):
         # The caller falls back to its citation. A plain attribution beats a
         # confident sentence about someone who is not in the photograph.
         out, fake = self.run_describe(
-            [(0, WORSE), (0, WORSE)], [(0, ONE_ABSENT), (0, ONE_ABSENT)])
+            [(0, WORSE), (0, WORSE), (0, WORSE)],
+            [(0, ONE_ABSENT), (0, ONE_ABSENT), (0, ONE_ABSENT)])
         self.assertIsNone(out)
-        self.assertEqual(len(fake.describe_prompts), 2)
+        self.assertEqual(len(fake.describe_prompts), 3)
+
+    def test_a_reworded_claim_is_retried_once_more_and_ships(self):
+        # 20 September 2026: "canopied staffs" failed, the retry said "canopy
+        # on poles" and failed, and the description was dropped. A second
+        # retry gets the description shipped where the first only reworded it.
+        out, fake = self.run_describe(
+            [(0, WORSE), (0, REWORDED), (0, GOOD)],
+            [(0, ONE_ABSENT), (0, REWORDED_ABSENT), (0, ALL_FOUND)])
+        self.assertEqual(out, GOOD)
+        self.assertEqual(len(fake.describe_prompts), 3)
+
+    def test_the_second_retry_names_every_claim_rejected_so_far(self):
+        # Not just the latest one: a claim that drops off the list the moment
+        # it is reworded is how the same canopy failed twice.
+        _, fake = self.run_describe(
+            [(0, WORSE), (0, REWORDED), (0, GOOD)],
+            [(0, ONE_ABSENT), (0, REWORDED_ABSENT), (0, ALL_FOUND)])
+        second = fake.describe_prompts[2]
+        self.assertIn('a small figure walking', second)
+        self.assertIn('a person on the path', second)
+        self.assertNotIn('a person on the path', fake.describe_prompts[1])
+
+    def test_a_claim_rejected_twice_is_listed_once(self):
+        _, fake = self.run_describe(
+            [(0, WORSE), (0, WORSE), (0, GOOD)],
+            [(0, ONE_ABSENT), (0, ONE_ABSENT), (0, ALL_FOUND)])
+        self.assertEqual(
+            fake.describe_prompts[2].count('- a small figure walking'), 1)
 
     def test_an_unmakeable_check_ships_the_description(self):
         # Never the thing that ends a run: a verifier having a bad morning

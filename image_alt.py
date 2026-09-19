@@ -288,18 +288,34 @@ Rules:
 
 Description: {alt}"""
 
-# Appended to the original prompt for the one retry. It names what failed, so
-# the second attempt is not simply a reroll of the same dice.
+# Appended to the original prompt for each retry. It names what failed, so
+# the next attempt is not simply a reroll of the same dice.
+#
+# ⚠️ It carries EVERY claim rejected so far, not just the last attempt's, and
+# it bans them as things rather than as phrasings. Measured 20 September 2026
+# on the Holmes post 3mvvekr76ql2n (a 1900 procession outside Westminster
+# Cathedral): the first description asserted "canopied staffs", the retry was
+# told so and came back asserting "canopy on poles", and the description was
+# dropped. The model had reworded the claim, not removed it, because the old
+# wording ("leaving out anything you cannot actually resolve") read as a
+# request for caution rather than a prohibition. The objects were gilt
+# processional lanterns on poles; a description without the word "canopy" in
+# it was there to be written.
 _REDO = """
 
-An earlier attempt at this description asserted the following, and a check against the image could not find them:
+Earlier attempts at this description asserted the following, and a check against the image could not find them:
 {bad}
 
-Write the description again, leaving out anything you cannot actually resolve. A shorter, safer description is the right answer here."""
+Write the description again WITHOUT them. Do not mention any of these things again, in these words or in any others, and do not describe the same feature under a different name: if the check could not find it, it is not in the picture. Everything else may stay. A shorter description is the right answer here."""
 
-# One retry, not more. A second failure means the model keeps seeing something
-# that is not there, and a third roll of the same dice is not evidence.
-MAX_REDESCRIBE = 1
+# Two retries, not more. Two because the first retry was measured to reword a
+# rejected claim rather than drop it (see _REDO), so the second is the first
+# attempt that has been told, in so many words, what may not be said. A third
+# failure means the model keeps seeing something that is not there, and a
+# further roll of the same dice is not evidence: measured before this went to
+# two, Holmes dropped 5 of 45 descriptions (11 percent) under the one-retry
+# rule, so the extra call is paid on about one post in nine.
+MAX_REDESCRIBE = 2
 
 _ABSENT_LINE = re.compile(r'^\s*ABSENT\s*\|\s*(.+?)\s*(?:\||$)')
 _FOUND_LINE = re.compile(r'^\s*FOUND\s*\|')
@@ -417,7 +433,8 @@ def describe(image_bytes, context='', *, env=None, model=MODEL,
 
     The description is checked against the image before it is returned (see
     the block above). A description carrying a claim the check cannot find is
-    regenerated once with that claim named, and dropped if it fails again —
+    regenerated up to MAX_REDESCRIBE times with every rejected claim
+    named and banned, and dropped if it still fails —
     the caller then falls back to its citation, which is the right outcome:
     a plain attribution beats a confident sentence about a person who is not
     in the photograph, because the reader cannot tell the difference.
@@ -439,6 +456,11 @@ def describe(image_bytes, context='', *, env=None, model=MODEL,
     if text is None or not verify:
         return text
 
+    # Every claim rejected on any attempt, in order, once. The retry prompt
+    # names all of them: a claim dropped from the ban list the moment it was
+    # reworded is how the 20 September 2026 post came to fail twice on the
+    # same canopy.
+    rejected = []
     for attempt in range(MAX_REDESCRIBE + 1):
         bad = _unsupported(image_bytes, text, **kw)
         if bad is None:
@@ -449,9 +471,11 @@ def describe(image_bytes, context='', *, env=None, model=MODEL,
         log(f'  (description failed verification: {"; ".join(bad)})')
         if attempt == MAX_REDESCRIBE:
             break
+        rejected += [b for b in bad if b not in rejected]
         redone = _generate(
             image_bytes,
-            prompt + _REDO.format(bad='\n'.join(f'- {b}' for b in bad)), **kw)
+            prompt + _REDO.format(bad='\n'.join(f'- {b}' for b in rejected)),
+            **kw)
         if redone is None:
             break
         text = redone
