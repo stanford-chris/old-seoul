@@ -312,9 +312,13 @@ Write the description again WITHOUT them. Do not mention any of these things aga
 # rejected claim rather than drop it (see _REDO), so the second is the first
 # attempt that has been told, in so many words, what may not be said. A third
 # failure means the model keeps seeing something that is not there, and a
-# further roll of the same dice is not evidence: measured before this went to
-# two, Holmes dropped 5 of 45 descriptions (11 percent) under the one-retry
-# rule, so the extra call is paid on about one post in nine.
+# further roll of the same dice is not evidence. Measured before this went to
+# two: of 45 Holmes posts under the one-retry rule, 3 were dropped by the
+# verifier (one of them, the Norwood Builder illustration of 2 September
+# 2026, wrongly: the verifier called ABSENT a hallway and a cane that are
+# plainly there) and 2 lost their description to generation TIMEOUTS on
+# 3-4 September, which this retry does not touch. The extra call is paid
+# on about one post in fifteen.
 MAX_REDESCRIBE = 2
 
 _ABSENT_LINE = re.compile(r'^\s*ABSENT\s*\|\s*(.+?)\s*(?:\||$)')
