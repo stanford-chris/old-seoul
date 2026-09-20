@@ -32,10 +32,11 @@ import random
 import re
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from atproto import Client, client_utils
+from atproto import Client, client_utils, exceptions
 
 import alt_log
 import image_alt
@@ -299,12 +300,17 @@ CATEGORY_COOLDOWN = 4
 DRAW_ATTEMPTS = 5
 
 
-def keychain_password(account, service):
+def keychain_password(account, service, default=None):
+    """A Keychain password, or `default` when the item is absent and one was
+    given; with no default, an absent item raises, since a bot with no
+    password cannot post and should say so."""
     result = subprocess.run(
         ['security', 'find-generic-password', '-a', account, '-s', service, '-w'],
         capture_output=True, text=True
     )
-    if result.returncode != 0:
+    if result.returncode != 0 or not result.stdout.strip():
+        if default is not None:
+            return default
         raise RuntimeError(
             f'No Keychain password for account="{account}" service="{service}".\n'
             f'Add it with:\n'
@@ -346,14 +352,36 @@ def claude_env():
     manual runs with a logged-in CLI still work.
     """
     env = os.environ.copy()
-    result = subprocess.run(
-        ['security', 'find-generic-password',
-         '-a', CLAUDE_TOKEN_ACCOUNT, '-s', CLAUDE_TOKEN_SERVICE, '-w'],
-        capture_output=True, text=True
-    )
-    if result.returncode == 0 and result.stdout.strip():
-        env['CLAUDE_CODE_OAUTH_TOKEN'] = result.stdout.strip()
+    token = keychain_password(CLAUDE_TOKEN_ACCOUNT, CLAUDE_TOKEN_SERVICE, default='')
+    if token:
+        env['CLAUDE_CODE_OAUTH_TOKEN'] = token
     return env
+
+
+def login_client(retries=4):
+    """Log in, retrying a transient network blip at fire time.
+
+    The same fragility every launchd atproto bot here has: login() creates a
+    session and then calls getProfile to populate client.me, and that leg can
+    time out on a sub-ten-second blip at the exact moment the job fires. See
+    [[reference_bot_network_blip_retries]] and holmes_post.py's _retry_network.
+    Only atproto's own NetworkError family is retried, and only the login:
+    send_images() is never retried, since a timeout there cannot tell a post
+    that never landed from one that landed with the response lost.
+    """
+    password = keychain_password(HANDLE, KEYCHAIN_SERVICE)  # outside the loop: a
+    last_error = None                                       # missing key is not transient
+    for attempt in range(retries):
+        try:
+            client = Client()
+            client.login(HANDLE, password)
+            return client
+        except exceptions.NetworkError as exc:
+            last_error = f'{type(exc).__name__}: {exc}'
+            print(f'Login attempt {attempt + 1}/{retries} failed ({last_error})')
+            if attempt + 1 < retries:
+                time.sleep(2 * (attempt + 1))
+    raise RuntimeError(f'Could not log in to Bluesky after {retries} attempts: {last_error}')
 
 
 def write_json_atomic(path, data, **dumps_kwargs):
@@ -554,8 +582,28 @@ def item_district(item):
 # house style narrowed "British style" to date format alone, so American
 # spelling is now the default everywhere except everylibrary and Holmes,
 # whose subject matter is itself British. Old Seoul's subject is Korean, so
-# it takes the default. All three rule blocks below (translate,
-# translate_title_only, _GAZETTE_HOUSE_RULES) changed together on that date.
+# it takes the default. The rules are written ONCE, in _HOUSE_RULES below,
+# and every prompt includes that block; until 20 September 2026 translate()
+# and translate_title_only() carried their own copies, which had already
+# drifted from the gazette's in the wording of the quotation-mark rule.
+
+# The house style every English line is asked to follow, whichever prompt
+# writes it. Quotation marks, capitals after a colon and thousands separators
+# are ALSO enforced in code (see the note above translate_gazette): an
+# instruction the model follows most of the time still ships the exception.
+_HOUSE_RULES = (
+    '- American English spelling: modernization not modernisation, harbor '
+    'not harbour, center not centre\n'
+    '- Write "percent" as one word, never "per cent"\n'
+    '- NO serial comma: "drinks, ices and meat", never "drinks, ices, and meat"\n'
+    '- Quote with double quotation marks, never single ones: a "comfort women" '
+    'camp, not a \'comfort women\' camp\n'
+    '- Use British date format for any dates (e.g. 9 June 1972, not June 9 1972 '
+    'or 06/09/1972)\n'
+    '- Write quantities of one thousand or more with thousands separators '
+    '(e.g. 3,000 officials, 25,000 spectators), but never put a separator in '
+    'a year (write 1972, not 1,972)\n'
+)
 def translate(title_ko, description_ko, year):
     """Translate Korean title and description to concise English via claude -p.
 
@@ -577,12 +625,7 @@ def translate(title_ko, description_ko, year):
         f'- If the Korean gives a REASON, a purpose or a cause, keep it. A circumstance kept without its reason reads as a non-sequitur: "targeted bad drinks during monsoon season" drops the epidemic control that put the season there, and leaves a reader wondering what the rain had to do with it\n'
         f'- Do not strengthen a verb. 단속 is a crackdown, not a seizure; 시찰 is an inspection, not a raid. Say what the Korean says happened, not what you suppose followed from it\n'
         f'- Do not add interpretation or extra context\n'
-        f'- American English spelling: modernization not modernisation, harbor not harbour, center not centre\n'
-        f'- Write "percent" as one word, never "per cent"\n'
-        f'- NO serial comma: "drinks, ices and meat", never "drinks, ices, and meat"\n'
-        f'- Quote with double quotation marks, never single ones — a "comfort women" camp, not a \'comfort women\' camp\n'
-        f'- Use British date format for any dates (e.g. 9 June 1972, not June 9 1972 or 06/09/1972)\n'
-        f'- Write quantities of one thousand or more with thousands separators (e.g. 3,000 officials, 25,000 spectators), but never put a separator in a year (write 1972, not 1,972)\n'
+        + _HOUSE_RULES +
         f'- date: the precise calendar date of the event ONLY if the Korean source explicitly states a specific day (e.g. 1968년 7월 17일, or 7월 17일). Format British: "17 July 1968". If a day and month are given without a year, complete it using the known Year above. If no specific day is stated, return an empty string. Never infer or guess a day.\n'
         f'- Return JSON only: {{"title": "...", "description": "...", "date": "..."}}'
     )
@@ -604,9 +647,8 @@ def translate_title_only(title_ko):
         f'- These are catalog entries for buildings, monuments and sites. '
         f'Keep Korean proper nouns in Revised Romanization (Gyeongbokgung, '
         f'Donhwamun), and translate the architectural terms that follow them\n'
-        f'- American English spelling: harbor not harbour, center not centre\n'
-        f'- Quote with double quotation marks, never single ones\n'
         f'- Do not add interpretation, context or anything not in the Korean\n'
+        + _HOUSE_RULES +
         f'- Return JSON only: {{"title": "..."}}'
     )
     out = _claude_json(prompt)
@@ -670,14 +712,7 @@ _GAZETTE_HOUSE_RULES = (
     '- Sentence case, NOT Title Case: capitalise the first word and proper '
     'nouns only. "Family motto calligraphy contest", not "Family Motto '
     'Calligraphy Contest"\n'
-    '- American English spelling: modernization not modernisation, harbor '
-    'not harbour, center not centre\n'
-    '- Write "percent" as one word, never "per cent"\n'
-    '- NO serial comma: "drinks, ices and meat", never "drinks, ices, and meat"\n'
-    '- Quote with double quotation marks, never single ones\n'
-    '- Use British date format for any dates (e.g. 9 June 1972)\n'
-    '- Write quantities of one thousand or more with thousands separators '
-    '(e.g. 35,000 trees), but never put a separator in a year\n'
+    + _HOUSE_RULES
 )
 
 
@@ -2080,24 +2115,24 @@ def main():
         print(f'Selected: [{item_id(pick)}] {pick["title"]} '
               f'({item_year(pick) or "?"}) topic={item_category(pick)} '
               f'source={pick["_source"]}')
+        def redraw(exhausted):
+            nonlocal candidates
+            candidates = [it for it in candidates if it is not pick]
+            if not candidates:
+                sys.exit(f'Error: no candidate left {exhausted}.')
+            print(f'  re-drawing (attempt {attempt} of {DRAW_ATTEMPTS})')
+
         try:
             picked_images = fetch_item_images(pick)
         except ImageFetchError as exc:
             print(f'  !! image fetch failed: {exc}')
             unusable += 1
-            candidates = [it for it in candidates if it is not pick]
-            if not candidates:
-                sys.exit('Error: no candidate left with a working image.')
-            print(f'  re-drawing (attempt {attempt} of {DRAW_ATTEMPTS})')
+            redraw('with a working image')
             continue
         print('Translating...')
         checked = translate_checked(pick)
         if checked is None:
-            candidates = [it for it in candidates if it is not pick]
-            if not candidates:
-                sys.exit('Error: no candidate left whose title passed the '
-                         'translation check.')
-            print(f'  re-drawing (attempt {attempt} of {DRAW_ATTEMPTS})')
+            redraw('whose title passed the translation check')
             continue
         item, images = pick, picked_images
         title_en, desc_en, date_raw = checked
@@ -2200,9 +2235,7 @@ def main():
         return
 
     # Post to Bluesky
-    password = keychain_password(HANDLE, KEYCHAIN_SERVICE)
-    bsky = Client()
-    bsky.login(HANDLE, password)
+    bsky = login_client()
 
     resp = bsky.send_images(
         text=post_text,

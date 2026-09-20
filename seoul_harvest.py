@@ -8,7 +8,6 @@ Usage:
     python3 seoul_harvest.py --sample N # fetch N evenly-spaced items for testing
 """
 
-import os
 import re
 import subprocess
 import sys
