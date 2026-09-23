@@ -4,7 +4,7 @@ Post one historical Seoul photo to Bluesky (@oldhanyang.bsky.social).
 Picks a random unposted item from the combined photo pools, translates with
 Claude, posts with the image, and marks it as posted in its own pool.
 
-Three pools (see SOURCES):
+Five pools (see SOURCES):
   - seoul_archive.json   Seoul Metropolitan Archives, 1950s-90s municipal
                          photography, dated, with Korean descriptions.
   - seoul_dryplate.json  National Museum of Korea's 조선총독부박물관 glass plates,
@@ -15,6 +15,11 @@ Three pools (see SOURCES):
                          (see GAZETTE_SLOTS), and an item is a region of a page
                          rather than a file, so its picture is cropped out of
                          the page scan on the way through.
+  - seoul_gongu.json     KTV news photography via 공유마당, 1950s-70s.
+                         공공누리 제1유형, credit mandatory as for the plates.
+  - seoul_loc.json       Library of Congress Prints & Photographs, 1895-1911.
+                         English catalogue captions, so the model writes the
+                         Korean line rather than the English one.
 
 Requires:
     security add-generic-password -a "oldhanyang.bsky.social" -s "seoulbot-bluesky" -w
@@ -101,8 +106,10 @@ GAZETTE_SLOTS = {
     '광고': {'label': 'Advertisement', 'kind': 'notice'},
 }
 
-# The four pools. They are posted from a single combined pool, so each
-# source's share of the feed is just its share of the unposted items.
+# The five pools. They are posted from a single combined pool. A source with
+# a `share` (gazette, KTV, Library of Congress) holds that fraction of the
+# draw; the two big photo pools split the rest by their share of the unposted
+# items (see draw_weights).
 #
 # `dated`: the Seoul Metropolitan Archives records carry a usable year, so their
 # posts lead with it. The glass plates mostly do not — only 284 of 1,452 have a
