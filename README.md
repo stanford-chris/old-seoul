@@ -464,8 +464,10 @@ since the last crawl.
 
 ## Source material and attribution
 
-Every post links back to its original item, and English captions are
-AI-generated and labeled as such.
+Every post links back to its original item. The translated line is
+AI-generated and labeled as such: English for four collections, Korean
+for the Library of Congress, whose catalogue captions are English (see
+"Sources" above).
 
 **[Seoul Metropolitan Archives](https://archives.seoul.go.kr)** — the harvester
 keeps only items the archive marks as public (`공개`) and unrestricted
